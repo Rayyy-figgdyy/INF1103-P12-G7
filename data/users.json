@@ -1,0 +1,16 @@
+[
+  {
+    "name": "Darren",
+    "license_plate": "SNN1212N",
+    "car_model": "Honda Civic",
+    "car_condition": "Brand New",
+    "coe_expiry_date": "2029-12-12"
+  },
+  {
+    "name": "Rayson",
+    "license_plate": "SBA9087A",
+    "car_model": "Toyota Camry",
+    "car_condition": "Brand New",
+    "coe_expiry_date": "2030-06-01"
+  }
+]
