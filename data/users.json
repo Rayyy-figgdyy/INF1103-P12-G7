@@ -12,5 +12,12 @@
     "car_model": "Toyota Camry",
     "car_condition": "Brand New",
     "coe_expiry_date": "2030-06-01"
+  },
+  {
+    "name": "darren",
+    "license_plate": "SNN9999N",
+    "car_model": "Honda Civic 2025",
+    "car_condition": "Brand New",
+    "coe_expiry_date": "2029-01-01"
   }
 ]

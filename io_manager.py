@@ -15,7 +15,6 @@ odometer reading) is passed in by main.py.
 from __future__ import annotations
 
 import datetime
-import os
 import re
 
 MENU_LOGGED_OUT = """
@@ -43,9 +42,6 @@ Logged in: {name} | {plate} | {car_model}
 
 # Singapore plate: 1-3 letters, 1-4 digits, 1 checksum letter (e.g. SBA1234A).
 LICENSE_PLATE_PATTERN = re.compile(r"^[A-Z]{1,3}\d{1,4}[A-Z]$")
-CAR_CONDITIONS = {"1": "Brand New", "2": "Used"}
-_CONDITION_WORDS = {"brand new": "Brand New", "new": "Brand New", "used": "Used"}
-PHOTO_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 MAX_ODOMETER_KM = 2_000_000
 
 
@@ -107,11 +103,6 @@ def _plate_error(plate: str, taken_plates: set[str]) -> str | None:
     return None
 
 
-def _parse_condition(raw: str) -> str | None:
-    raw = raw.strip()
-    return CAR_CONDITIONS.get(raw) or _CONDITION_WORDS.get(raw.lower())
-
-
 def confirm_action(question: str) -> bool:
     """Yes/no question; re-prompts until it gets y or n."""
     while True:
@@ -162,84 +153,41 @@ def prompt_identity(taken_plates: set[str]) -> dict:
         print(f"  -> {error} Please try again.")
 
 
-def prompt_car_model_source() -> str:
-    """'text' or 'photo'."""
+def prompt_car_choice(car_models: list[str]) -> str:
+    """Pick the user's car from the supported models (main.py passes the
+    list in from data_manager)."""
+    print("\nWhich car do you drive?")
+    for number, model in enumerate(car_models, start=1):
+        print(f"  {number}) {model}")
     while True:
-        raw = input("Enter car model by  1) typing it  2) photo: ").strip()
-        if raw == "1":
-            return "text"
-        if raw == "2":
-            return "photo"
-        print("  -> Please enter 1 or 2.")
+        raw = input("Car number: ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(car_models):
+            return car_models[int(raw) - 1]
+        print(f"  -> Please enter a number from 1 to {len(car_models)}.")
 
 
-def prompt_car_model_text() -> str:
-    return _prompt_text("Car model (e.g. Toyota Corolla 2020)")
-
-
-def prompt_photo_path() -> str:
-    """Path to an existing image file. Accepts paths dragged into the
-    terminal (quoted, or with escaped spaces)."""
+def prompt_coe_expiry() -> str:
+    """COE expiry date. Past dates are allowed: an expired COE is real
+    information that logic_manager acts on."""
     while True:
-        raw = input("Path to car photo (e.g. photos/car7.jpg): ").strip().strip("'\"")
-        path = os.path.expanduser(raw.replace("\\ ", " "))
-        if not path:
-            print("  -> Path cannot be empty. Please try again.")
-        elif not os.path.isfile(path):
-            print(f"  -> No file found at '{path}'. Please try again.")
-        elif not path.lower().endswith(PHOTO_EXTENSIONS):
-            print(f"  -> Photo must be one of: {', '.join(PHOTO_EXTENSIONS)}. Please try again.")
-        else:
-            return path
-
-
-def confirm_identified_car(car: dict) -> bool:
-    print("\nAI identified this car as:")
-    print(f"  {car['make']} {car['model']} ({car['year_range']}) -- confidence: {car['confidence']}")
-    return confirm_action("Use this as your car model?")
-
-
-def prompt_car_details() -> dict:
-    """Car condition and COE expiry date."""
-    while True:
-        condition = _parse_condition(input("Car condition  1) Brand New  2) Used: "))
-        if condition:
-            break
-        print("  -> Please enter 1 (Brand New) or 2 (Used).")
-    while True:
-        # Past dates are allowed: an expired COE is real information.
         coe = _parse_date(input("COE expiry date (YYYY-MM-DD): ").strip())
         if coe:
-            break
+            return coe.isoformat()
         print("  -> COE expiry date must be a real date in YYYY-MM-DD format. Please try again.")
-    return {"car_condition": condition, "coe_expiry_date": coe.isoformat()}
 
 
 def prompt_updated_profile(current: dict) -> dict:
-    """Edit name, car model, condition and COE expiry. Enter keeps the
-    current value. The license plate is the account's identity and can't
-    be changed -- delete and re-register to use a different plate."""
+    """Edit name and COE expiry. Enter keeps the current value. The license
+    plate and car are the account's identity and can't be changed --
+    delete and re-register for a different car."""
     print("\n--- Update profile (press Enter to keep the current value) ---")
     print(f"License plate: {current['license_plate']} (cannot be changed)")
+    print(f"Car:           {current['car_model']} ({current['car_condition']}) (cannot be changed)")
     updated = dict(current)
 
     raw = input(f"Name [{current['name']}]: ").strip()
     if raw:
         updated["name"] = raw
-
-    raw = input(f"Car model [{current['car_model']}]: ").strip()
-    if raw:
-        updated["car_model"] = raw
-
-    while True:
-        raw = input(f"Car condition  1) Brand New  2) Used [{current['car_condition']}]: ").strip()
-        if not raw:
-            break
-        condition = _parse_condition(raw)
-        if condition:
-            updated["car_condition"] = condition
-            break
-        print("  -> Enter 1 or 2, or press Enter to keep.")
 
     while True:
         raw = input(f"COE expiry date [{current['coe_expiry_date']}]: ").strip()
@@ -329,6 +277,7 @@ def display_record(record: dict) -> None:
     urgency_text = f"{urgency}/10" if urgency is not None else "n/a"
     print(f"AI urgency:         {urgency_text} (confidence: {record.get('confidence')})")
     print(f"AI summary:         {record.get('overdue_summary')}")
+    print(f"Manual reference:   {record.get('manual_reference')}")
     print(f"OUTCOME:            {record.get('outcome')}")
     print(f"Service by:         {record.get('recommended_service_date')}")
     print(f"Risk score:         {record.get('risk_score')}/100")

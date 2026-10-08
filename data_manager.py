@@ -10,7 +10,8 @@ Framework brief, section 2.4:
 Files (all flat JSON in data/):
   maintenance_records.json  AI-processed maintenance checks (written by the app)
   users.json                user/car profiles, keyed by license_plate (written by the app)
-  service_schedule.json     stored manufacturer service schedule (reference data,
+  cars.json                 the 4 supported cars: condition, manual PDF and
+                            manufacturer service schedule (reference data,
                             committed to Git; proposal business rule #2)
 
 No business rules and no terminal I/O live here -- storage only.
@@ -23,27 +24,13 @@ import os
 
 logger = logging.getLogger("data_manager")
 
-_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+_DATA_DIR = os.path.join(PROJECT_DIR, "data")
 DATA_FILE = os.path.join(_DATA_DIR, "maintenance_records.json")
 USERS_FILE = os.path.join(_DATA_DIR, "users.json")
-SCHEDULE_FILE = os.path.join(_DATA_DIR, "service_schedule.json")
+CARS_FILE = os.path.join(_DATA_DIR, "cars.json")
 
-# Built-in copy of the default schedule, used only if service_schedule.json
-# is missing or corrupt, so the app keeps working instead of crashing.
-FALLBACK_SCHEDULE: dict = {
-    "default": {
-        "Engine Oil": {"km": 10000, "months": 6},
-        "Air Filter": {"km": 20000, "months": 12},
-        "Brake Pads": {"km": 40000, "months": 24},
-        "Brake Fluid": {"km": 40000, "months": 24},
-        "Spark Plugs": {"km": 30000, "months": 24},
-        "Tyres": {"km": 50000, "months": 48},
-        "Coolant": {"km": 60000, "months": 48},
-        "Battery": {"km": 60000, "months": 36},
-        "Timing Belt": {"km": 100000, "months": 60},
-    },
-    "models": {},
-}
+VALID_CONDITIONS = ("Brand New", "Used")
 
 
 # --- Generic JSON helpers ----------------------------------------------
@@ -161,7 +148,7 @@ def delete_user(license_plate: str) -> bool:
     return _write_json_list(USERS_FILE, remaining)
 
 
-# --- Stored manufacturer service schedule ---------------------------------
+# --- Car catalogue: the 4 supported cars --------------------------------
 
 def _is_valid_interval(entry) -> bool:
     return (
@@ -171,42 +158,67 @@ def _is_valid_interval(entry) -> bool:
     )
 
 
-def load_schedule() -> dict:
-    """Return the stored schedule, or the built-in fallback if the file is
-    missing or malformed."""
-    data = _read_json(SCHEDULE_FILE)
-    if not isinstance(data, dict) or not isinstance(data.get("default"), dict):
+def _clean_car(entry) -> dict | None:
+    """A catalogue entry with only its valid schedule lines, or None if the
+    entry itself is unusable (logged)."""
+    if not (isinstance(entry, dict)
+            and isinstance(entry.get("model"), str) and entry["model"].strip()
+            and entry.get("condition") in VALID_CONDITIONS
+            and isinstance(entry.get("manual"), str)
+            and isinstance(entry.get("schedule"), dict)):
+        logger.error("Skipping invalid car entry in %s: %r", CARS_FILE, entry)
+        return None
+    schedule = {part: e for part, e in entry["schedule"].items() if _is_valid_interval(e)}
+    return {**entry, "schedule": schedule}
+
+
+def load_cars() -> list[dict]:
+    """All valid cars in the catalogue, in file order. [] if the file is
+    missing or corrupt -- never raises."""
+    data = _read_json(CARS_FILE)
+    if not isinstance(data, dict) or not isinstance(data.get("cars"), list):
         if data is not None:
-            logger.error("%s has no valid 'default' section -- using built-in schedule.", SCHEDULE_FILE)
-        return FALLBACK_SCHEDULE
-    if not isinstance(data.get("models"), dict):
-        data["models"] = {}
-    return data
+            logger.error("%s has no 'cars' list.", CARS_FILE)
+        return []
+    return [car for car in map(_clean_car, data["cars"]) if car is not None]
 
 
-def _schedule_for_model(car_model: str) -> dict:
-    """Merge the default schedule with the most specific model override."""
-    schedule = load_schedule()
-    merged = {p: e for p, e in schedule["default"].items() if _is_valid_interval(e)}
+def list_car_models() -> list[str]:
+    """Model names users can choose from when registering."""
+    return [car["model"] for car in load_cars()]
 
-    model_lower = (car_model or "").lower()
-    matching_keys = [k for k in schedule["models"] if k.lower() in model_lower]
-    if matching_keys:
-        best = max(matching_keys, key=len)
-        overrides = schedule["models"][best]
-        if isinstance(overrides, dict):
-            merged.update({p: e for p, e in overrides.items() if _is_valid_interval(e)})
-    return merged
+
+def find_car(car_model: str) -> dict | None:
+    """The catalogue entry for this model, or None."""
+    for car in load_cars():
+        if car["model"] == car_model:
+            return car
+    return None
 
 
 def list_parts(car_model: str) -> list[str]:
-    """Parts that have a stored service interval for this car model."""
-    return sorted(_schedule_for_model(car_model))
+    """Parts with a stored service interval for this car."""
+    car = find_car(car_model)
+    return sorted(car["schedule"]) if car else []
 
 
 def get_service_interval(car_model: str, part_name: str) -> dict | None:
-    """{'interval_km', 'interval_months'} for this model/part, or None."""
-    entry = _schedule_for_model(car_model).get(part_name)
+    """{'interval_km', 'interval_months'} for this car/part, or None."""
+    car = find_car(car_model)
+    entry = car["schedule"].get(part_name) if car else None
     if entry is None:
         return None
     return {"interval_km": entry["km"], "interval_months": entry["months"]}
+
+
+def get_manual_path(car_model: str) -> str | None:
+    """Full path to this car's manual PDF, or None (logged) if the car is
+    unknown or the file isn't there."""
+    car = find_car(car_model)
+    if car is None:
+        return None
+    path = os.path.join(PROJECT_DIR, car["manual"])
+    if not os.path.isfile(path):
+        logger.error("Manual for %s not found at %s", car_model, path)
+        return None
+    return path

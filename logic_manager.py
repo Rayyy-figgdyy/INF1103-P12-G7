@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import datetime
 
-SAFETY_CRITICAL_PARTS = {"brake pads", "brake fluid", "tyres", "timing belt"}
+SAFETY_CRITICAL_PARTS = {"brake pads", "brake fluid"}
 DAYS_PER_MONTH = 30.44
 COE_DEFER_WINDOW_DAYS = 180
 

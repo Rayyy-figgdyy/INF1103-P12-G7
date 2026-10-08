@@ -24,9 +24,9 @@ import logic_manager
 # The pipeline
 # ======================================================================
 
-def build_record(raw_record: dict) -> dict:
-    """AI enrichment, then business rules. Returns the final record."""
-    enriched = ai_manager.process(raw_record)
+def build_record(raw_record: dict, manual_path: str | None = None) -> dict:
+    """AI enrichment (using the car's manual), then business rules."""
+    enriched = ai_manager.process(raw_record, manual_path=manual_path)
     final_record = {**enriched, **logic_manager.evaluate(enriched)}
     final_record["risk_score"] = logic_manager.score(final_record)
     final_record["outcome"] = logic_manager.route(final_record)
@@ -34,6 +34,10 @@ def build_record(raw_record: dict) -> dict:
 
 
 def check_part_flow(user: dict) -> dict:
+    manual_path = data_manager.get_manual_path(user["car_model"])
+    if manual_path is None:
+        io_manager.display_message(f"The manual for {user['car_model']} is missing, so parts can't be checked.")
+        return user
     parts = data_manager.list_parts(user["car_model"])
     if not parts:
         io_manager.display_message("No service schedule is available, so parts can't be checked.")
@@ -58,8 +62,8 @@ def check_part_flow(user: dict) -> dict:
         "check_date": datetime.date.today().isoformat(),
     }
 
-    io_manager.display_message("\nAsking the AI to assess this part...")
-    final_record = build_record(raw_record)
+    io_manager.display_message("\nAsking the AI to check this part against your manual...")
+    final_record = build_record(raw_record, manual_path)
 
     if not data_manager.save(final_record):
         io_manager.display_message("Warning: the assessment could not be saved to disk.")
@@ -96,25 +100,19 @@ def login_flow(user: dict | None) -> dict | None:
     return found
 
 
-def _choose_car_model() -> str:
-    """Car model by text, or identified from a photo by the AI."""
-    if io_manager.prompt_car_model_source() == "photo":
-        path = io_manager.prompt_photo_path()
-        io_manager.display_message("Identifying the car from your photo...")
-        car = ai_manager.identify_car_model(path)
-        if car is None:
-            io_manager.display_message("Couldn't identify the car from that photo -- please type the model instead.")
-        elif io_manager.confirm_identified_car(car):
-            return f"{car['make']} {car['model']} {car['year_range']}"
-    return io_manager.prompt_car_model_text()
-
-
 def register_flow(user: dict | None) -> dict | None:
+    car_models = data_manager.list_car_models()
+    if not car_models:
+        io_manager.display_message("The car list (data/cars.json) is missing, so you can't register yet.")
+        return None
     taken_plates = {u.get("license_plate") for u in data_manager.load_users()}
+    identity = io_manager.prompt_identity(taken_plates)
+    car_model = io_manager.prompt_car_choice(car_models)
     profile = {
-        **io_manager.prompt_identity(taken_plates),
-        "car_model": _choose_car_model(),
-        **io_manager.prompt_car_details(),
+        **identity,
+        "car_model": car_model,
+        "car_condition": data_manager.find_car(car_model)["condition"],
+        "coe_expiry_date": io_manager.prompt_coe_expiry(),
     }
     if not data_manager.save_user(profile):
         io_manager.display_message("Could not save your profile. Please try again.")

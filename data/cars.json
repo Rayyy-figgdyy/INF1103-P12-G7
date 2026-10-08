@@ -1,0 +1,57 @@
+{
+  "_note": "The 4 cars in our test environment. Replace each 'schedule' with the intervals from that car's manual (km and months, whichever comes first). 'manual' is the PDF the AI reads.",
+  "cars": [
+    {
+      "model": "Honda Civic 2025",
+      "condition": "Brand New",
+      "manual": "manuals/honda_civic_2025.pdf",
+      "schedule": {
+        "Engine Oil":   {"km": 10000,  "months": 12},
+        "Brake Pads":   {"km": 40000,  "months": 24},
+        "Brake Fluid":  {"km": 40000,  "months": 36},
+        "Spark Plugs":  {"km": 100000, "months": 72},
+        "Coolant":      {"km": 100000, "months": 60},
+        "Battery":      {"km": 60000,  "months": 36}
+      }
+    },
+    {
+      "model": "Mazda 3 Hatchback 2020",
+      "condition": "Used",
+      "manual": "manuals/mazda_3_hatchback_2020.pdf",
+      "schedule": {
+        "Engine Oil":   {"km": 10000,  "months": 12},
+        "Brake Pads":   {"km": 40000,  "months": 24},
+        "Brake Fluid":  {"km": 40000,  "months": 24},
+        "Spark Plugs":  {"km": 75000,  "months": 60},
+        "Coolant":      {"km": 100000, "months": 60},
+        "Battery":      {"km": 60000,  "months": 36}
+      }
+    },
+    {
+      "model": "Hyundai Elantra 2021",
+      "condition": "Used",
+      "manual": "manuals/hyundai_elantra_2021.pdf",
+      "schedule": {
+        "Engine Oil":   {"km": 10000,  "months": 12},
+        "Brake Pads":   {"km": 40000,  "months": 24},
+        "Brake Fluid":  {"km": 40000,  "months": 24},
+        "Spark Plugs":  {"km": 100000, "months": 72},
+        "Coolant":      {"km": 100000, "months": 60},
+        "Battery":      {"km": 60000,  "months": 36}
+      }
+    },
+    {
+      "model": "Kia Forte",
+      "condition": "Used",
+      "manual": "manuals/kia_forte.pdf",
+      "schedule": {
+        "Engine Oil":   {"km": 10000,  "months": 12},
+        "Brake Pads":   {"km": 40000,  "months": 24},
+        "Brake Fluid":  {"km": 40000,  "months": 24},
+        "Spark Plugs":  {"km": 100000, "months": 72},
+        "Coolant":      {"km": 100000, "months": 60},
+        "Battery":      {"km": 60000,  "months": 36}
+      }
+    }
+  ]
+}

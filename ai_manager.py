@@ -12,8 +12,8 @@ The test from the brief: delete this file and the app can no longer
 produce an urgency score, an overdue summary or a recommendation, so
 logic_manager has nothing to route on. That is AI as the core engine.
 
-Also identifies a car model from a photo (proposal: "Car Model (Photo of
-the car model or by text)"), adapted from car_model_identifier.ipynb.
+Every request attaches the owner's manual (PDF) for the user's car, and
+the AI must base its urgency score and confidence on that manual.
 
 Config (.env): GEMINI_API_KEY (required), GEMINI_MODEL (optional).
 """
@@ -51,13 +51,7 @@ ASSESSMENT_SCHEMA = {
     "confidence": lambda v: v in VALID_CONFIDENCE,
     "overdue_summary": _is_non_empty_str,
     "recommended_action": _is_non_empty_str,
-}
-
-CAR_ID_SCHEMA = {
-    "make": _is_non_empty_str,
-    "model": _is_non_empty_str,
-    "year_range": _is_non_empty_str,
-    "confidence": lambda v: v in VALID_CONFIDENCE,
+    "manual_reference": _is_non_empty_str,
 }
 
 # Merged into the record when the AI can't give a valid answer after
@@ -67,6 +61,7 @@ FALLBACK_ASSESSMENT = {
     "confidence": "Unknown",
     "overdue_summary": "AI assessment unavailable.",
     "recommended_action": "Could not get an AI recommendation -- check this part manually.",
+    "manual_reference": "n/a",
     "ai_status": "unavailable",
 }
 
@@ -91,56 +86,60 @@ def _get_model() -> str:
 # --- Prompts -------------------------------------------------------------
 
 def build_prompt(record: dict) -> str:
-    """Prompt for one maintenance check. Asks for strict JSON only."""
+    """Prompt for one maintenance check. The car's owner's manual is
+    attached to the same request; the AI must base its answer on it."""
     return (
-        "You are an automotive maintenance advisor in Singapore. Assess how "
-        "urgently one car part needs servicing.\n\n"
+        "You are an automotive maintenance advisor in Singapore. The owner's "
+        "manual for this car is attached. Using that manual as your main "
+        "source, assess how urgently one part needs servicing.\n\n"
         "VEHICLE\n"
         f"- Model: {record.get('car_model')}\n"
         f"- Condition when bought: {record.get('car_condition')}\n"
         f"- COE expiry date: {record.get('coe_expiry_date')}\n\n"
         "PART\n"
         f"- Part: {record.get('part_name')}\n"
-        f"- Manufacturer schedule: every {record.get('interval_km')} km or "
+        f"- Our stored schedule: every {record.get('interval_km')} km or "
         f"{record.get('interval_months')} months, whichever comes first\n"
         f"- Last serviced: {record.get('last_service_date')} at "
         f"{record.get('last_service_mileage')} km\n"
         f"- Today: {record.get('check_date')}, odometer {record.get('current_odometer')} km\n\n"
-        "Consider: how far past (or short of) the schedule the part is by "
-        "distance AND by time; how heavily the car is driven since the last "
-        "service; whether the part is safety-critical; and that used cars may "
-        "have unknown prior wear.\n\n"
+        "STEPS\n"
+        "1. Find what the manual says about this part: its replacement or "
+        "inspection interval, and any 'severe driving conditions' schedule "
+        "(Singapore's heat and stop-and-go traffic usually count as severe).\n"
+        "2. Compare the distance AND time since the last service with that interval.\n"
+        "3. Score urgency with this scale:\n"
+        "   1-3  well within the interval (under 70% of distance and time used)\n"
+        "   4-5  approaching the interval (70-100% used)\n"
+        "   6-7  at or just past the interval, part not safety-critical\n"
+        "   8-9  clearly overdue, or a safety-critical part (brake pads, "
+        "brake fluid) at or past its interval\n"
+        "   10   safety-critical and far overdue: do not drive until serviced\n"
+        "   For a used car, the earlier service history is unknown, so lean "
+        "one point higher when unsure.\n"
+        "4. Set confidence:\n"
+        "   High    the manual states an interval for this exact part and you used it\n"
+        "   Medium  the manual only covers it indirectly (e.g. 'inspect' not "
+        "'replace', unclear normal vs severe), or disagrees with our stored schedule\n"
+        "   Low     the manual does not cover this part; you used general knowledge\n\n"
         "Reply with ONLY one JSON object, exactly these keys:\n"
         "{\n"
-        '  "urgency_score": <integer 1-10; 1 = not urgent, 10 = service immediately>,\n'
+        '  "urgency_score": <integer 1-10>,\n'
         '  "confidence": <"High", "Medium" or "Low">,\n'
         '  "overdue_summary": <one short sentence such as "Engine oil: 650 km overdue" '
         'or "Brake fluid: 12 days overdue" or "Air filter: 3,000 km remaining">,\n'
-        '  "recommended_action": <one short sentence telling the owner what to do next>\n'
+        '  "recommended_action": <one short sentence telling the owner what to do next>,\n'
+        '  "manual_reference": <where in the manual you found this, e.g. '
+        '"Maintenance schedule, p. 7", or "Not covered in manual">\n'
         "}"
-    )
-
-
-def build_car_id_prompt() -> str:
-    """Prompt for identifying a car from a photo (from the notebook)."""
-    return (
-        "Identify the car in this photo. Reply with ONLY one JSON object, "
-        "exactly these keys:\n"
-        "{\n"
-        '  "make": <manufacturer, e.g. "Toyota">,\n'
-        '  "model": <model name, e.g. "Corolla Altis">,\n'
-        '  "year_range": <best estimate of year or generation, e.g. "2019-2023">,\n'
-        '  "confidence": <"High", "Medium" or "Low">\n'
-        "}\n"
-        "If you cannot tell the exact model, give your best guess with Low confidence."
     )
 
 
 # --- API call, parsing, validation --------------------------------------------
 
-def call_api(prompt: str, image_path: str | None = None, client=None) -> str | None:
-    """Send the prompt (plus an optional image) to Gemini and return the
-    raw text. Any failure -- no key, network, timeout, auth, quota,
+def call_api(prompt: str, manual_path: str | None = None, client=None) -> str | None:
+    """Send the prompt (plus the car's manual PDF, if given) to Gemini and
+    return the raw text. Any failure -- no key, network, timeout, auth, quota,
     upload -- is logged and returns None. Never raises.
 
     `client` is only passed in by tests, to use a fake instead of the network.
@@ -151,8 +150,8 @@ def call_api(prompt: str, image_path: str | None = None, client=None) -> str | N
             return None
     try:
         contents = [prompt]
-        if image_path:
-            contents = [client.files.upload(file=image_path), prompt]
+        if manual_path:
+            contents = [client.files.upload(file=manual_path), prompt]
         response = client.models.generate_content(
             model=_get_model(), contents=contents, config=GENERATION_CONFIG,
         )
@@ -210,16 +209,11 @@ def validate_response(data: dict | None) -> dict | None:
     return cleaned
 
 
-def validate_car_id_response(data: dict | None) -> dict | None:
-    """Validate a photo identification result, or None to reject it."""
-    return _check_schema(data, CAR_ID_SCHEMA)
-
-
-def _request_valid_json(prompt: str, validator, image_path: str | None,
+def _request_valid_json(prompt: str, validator, manual_path: str | None,
                         client, max_attempts: int) -> dict | None:
     """call -> parse -> validate, retrying on a failed call or malformed output."""
     for attempt in range(1, max_attempts + 1):
-        result = validator(parse_response(call_api(prompt, image_path=image_path, client=client)))
+        result = validator(parse_response(call_api(prompt, manual_path=manual_path, client=client)))
         if result is not None:
             return result
         logger.warning("No valid AI response (attempt %d of %d).", attempt, max_attempts)
@@ -228,15 +222,11 @@ def _request_valid_json(prompt: str, validator, image_path: str | None,
 
 # --- Entry points used by main.py ----------------------------------------------
 
-def process(record: dict, client=None, max_attempts: int = 2) -> dict:
-    """Send one maintenance record through the AI and return a copy with
-    the AI fields merged in. Always returns a usable record."""
-    result = _request_valid_json(build_prompt(record), validate_response, None, client, max_attempts)
+def process(record: dict, manual_path: str | None = None, client=None,
+            max_attempts: int = 2) -> dict:
+    """Send one maintenance record (plus its car's manual) through the AI
+    and return a copy with the AI fields merged in. Always returns a
+    usable record."""
+    result = _request_valid_json(build_prompt(record), validate_response,
+                                 manual_path, client, max_attempts)
     return {**record, **(result or FALLBACK_ASSESSMENT)}
-
-
-def identify_car_model(image_path: str, client=None, max_attempts: int = 2) -> dict | None:
-    """Identify a car from a photo: {'make','model','year_range','confidence'},
-    or None if the AI couldn't give a valid answer."""
-    return _request_valid_json(build_car_id_prompt(), validate_car_id_response,
-                               image_path, client, max_attempts)
