@@ -289,6 +289,7 @@ def display_record(record: dict) -> None:
         print(f"Overdue by:         {record.get('km_overdue'):,} km / {record.get('days_overdue')} days")
     urgency_text = f"{urgency}/10" if urgency is not None else "n/a"
     print(f"AI urgency:         {urgency_text} (confidence: {record.get('confidence')})")
+    print(f"Answered by:        {record.get('ai_provider', 'n/a')}")
     print(f"AI summary:         {record.get('overdue_summary')}")
     print(f"Manual reference:   {record.get('manual_reference')}")
     print(f"OUTCOME:            {record.get('outcome')}")

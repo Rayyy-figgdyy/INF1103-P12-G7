@@ -40,5 +40,26 @@
     "car_model": "Honda Civic 2025",
     "car_condition": "Brand New",
     "coe_expiry_date": "2030-09-09"
+  },
+  {
+    "name": "bb",
+    "license_plate": "SXX1234X",
+    "car_model": "Mazda 3 Hatchback 2020",
+    "car_condition": "Used",
+    "coe_expiry_date": "2030-02-20"
+  },
+  {
+    "name": "ss",
+    "license_plate": "SBA1234Z",
+    "car_model": "Honda Civic 2025",
+    "car_condition": "Brand New",
+    "coe_expiry_date": "2030-02-02"
+  },
+  {
+    "name": "Kai",
+    "license_plate": "SZZ12Z",
+    "car_model": "Honda Civic 2025",
+    "car_condition": "Brand New",
+    "coe_expiry_date": "2030-01-01"
   }
 ]

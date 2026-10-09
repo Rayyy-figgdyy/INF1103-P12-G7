@@ -22,7 +22,7 @@ python3 -m venv .venv              # create a virtual environment
 source .venv/bin/activate          # activate it (prompt shows "(.venv)")
 pip install -r requirements.txt    # install dependencies
 cp .env.example .env               # create your private config file
-open -e .env                       # put your real key after GEMINI_API_KEY=
+open -e .env                       # add your Gemini key (and Groq key for the backup)
 ```
 
 Get a free key at https://aistudio.google.com/apikey. Never commit `.env`
@@ -114,7 +114,8 @@ User -> io_manager -> ai_manager -> logic_manager -> data_manager
 
 | Scenario | Detected by | Handling | What the user sees |
 |---|---|---|---|
-| API connection failure / timeout / bad key | Exception caught in `call_api` | Logged, retried once, then fallback values | "NEEDS MANUAL REVIEW - AI assessment unavailable" |
+| Gemini fails (outage / timeout / rate limit / bad key) | Exception caught in `_call_gemini` | Same prompt sent to the Groq backup, with the manual's text | Normal result; "Answered by: Groq (backup)" |
+| Both Gemini and Groq fail | Both calls return None | Logged, retried once, then fallback values | "NEEDS MANUAL REVIEW - AI assessment unavailable" |
 | Malformed AI response | `parse_response` / `validate_response` return None | Logged, retried once, then fallback | Same as above |
 | Missing data file | `os.path.exists` in `_read_json` | Start with an empty list | Empty history; app continues |
 | Corrupt data file | `json.JSONDecodeError` caught | Logged, treated as empty | App continues |
