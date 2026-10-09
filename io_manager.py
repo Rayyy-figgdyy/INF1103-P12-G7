@@ -44,6 +44,10 @@ Logged in: {name} | {plate} | {car_model}
 LICENSE_PLATE_PATTERN = re.compile(r"^[A-Z]{1,3}\d{1,4}[A-Z]$")
 MAX_ODOMETER_KM = 2_000_000
 
+# How dates are typed and shown. Dates are still SAVED as YYYY-MM-DD.
+DATE_FORMAT = "%d/%m/%Y"
+DATE_HINT = "DD/MM/YYYY"
+
 
 # ======================================================================
 # Generic validated prompts (private helpers)
@@ -71,17 +75,26 @@ def _prompt_km(label: str) -> int:
 
 
 def _parse_date(raw: str) -> datetime.date | None:
+    """Read a date typed as DD/MM/YYYY (DD-MM-YYYY also works)."""
     try:
-        return datetime.date.fromisoformat(raw)
+        return datetime.datetime.strptime(raw.replace("-", "/"), DATE_FORMAT).date()
     except ValueError:
         return None
 
 
+def _show_date(iso_date) -> str:
+    """Turn a saved YYYY-MM-DD date into DD/MM/YYYY for display."""
+    try:
+        return datetime.date.fromisoformat(str(iso_date)).strftime(DATE_FORMAT)
+    except ValueError:
+        return str(iso_date)
+
+
 def _prompt_past_date(label: str) -> str:
     while True:
-        parsed = _parse_date(input(f"{label} (YYYY-MM-DD): ").strip())
+        parsed = _parse_date(input(f"{label} ({DATE_HINT}): ").strip())
         if parsed is None:
-            print(f"  -> {label} must be a real date in YYYY-MM-DD format. Please try again.")
+            print(f"  -> {label} must be a real date in {DATE_HINT} format. Please try again.")
         elif parsed > datetime.date.today():
             print(f"  -> {label} cannot be in the future. Please try again.")
         else:
@@ -170,10 +183,10 @@ def prompt_coe_expiry() -> str:
     """COE expiry date. Past dates are allowed: an expired COE is real
     information that logic_manager acts on."""
     while True:
-        coe = _parse_date(input("COE expiry date (YYYY-MM-DD): ").strip())
+        coe = _parse_date(input(f"COE expiry date ({DATE_HINT}): ").strip())
         if coe:
             return coe.isoformat()
-        print("  -> COE expiry date must be a real date in YYYY-MM-DD format. Please try again.")
+        print(f"  -> COE expiry date must be a real date in {DATE_HINT} format. Please try again.")
 
 
 def prompt_updated_profile(current: dict) -> dict:
@@ -190,14 +203,14 @@ def prompt_updated_profile(current: dict) -> dict:
         updated["name"] = raw
 
     while True:
-        raw = input(f"COE expiry date [{current['coe_expiry_date']}]: ").strip()
+        raw = input(f"COE expiry date ({DATE_HINT}) [{_show_date(current['coe_expiry_date'])}]: ").strip()
         if not raw:
             break
         coe = _parse_date(raw)
         if coe:
             updated["coe_expiry_date"] = coe.isoformat()
             break
-        print("  -> Use YYYY-MM-DD, or press Enter to keep.")
+        print(f"  -> Use {DATE_HINT}, or press Enter to keep.")
 
     return updated
 
@@ -208,7 +221,7 @@ def display_user(user: dict) -> None:
     print(f"License plate:   {user.get('license_plate')}")
     print(f"Car model:       {user.get('car_model')}")
     print(f"Car condition:   {user.get('car_condition')}")
-    print(f"COE expiry date: {user.get('coe_expiry_date')}")
+    print(f"COE expiry date: {_show_date(user.get('coe_expiry_date'))}")
 
 
 # ======================================================================
@@ -268,8 +281,8 @@ def display_record(record: dict) -> None:
     urgency = record.get("urgency_score")
     print("\n--- Maintenance check ---")
     print(f"Part:               {record.get('part_name')}  ({record.get('car_model')}, {record.get('license_plate')})")
-    print(f"Checked on:         {record.get('check_date')} at {record.get('current_odometer'):,} km")
-    print(f"Last serviced:      {record.get('last_service_date')} at {record.get('last_service_mileage'):,} km")
+    print(f"Checked on:         {_show_date(record.get('check_date'))} at {record.get('current_odometer'):,} km")
+    print(f"Last serviced:      {_show_date(record.get('last_service_date'))} at {record.get('last_service_mileage'):,} km")
     print(f"Schedule:           every {record.get('interval_km'):,} km or {record.get('interval_months')} months")
     print(f"Since last service: {record.get('km_since_service'):,} km / {record.get('days_since_service')} days")
     if record.get("is_overdue"):
@@ -279,7 +292,7 @@ def display_record(record: dict) -> None:
     print(f"AI summary:         {record.get('overdue_summary')}")
     print(f"Manual reference:   {record.get('manual_reference')}")
     print(f"OUTCOME:            {record.get('outcome')}")
-    print(f"Service by:         {record.get('recommended_service_date')}")
+    print(f"Service by:         {_show_date(record.get('recommended_service_date'))}")
     print(f"Risk score:         {record.get('risk_score')}/100")
     print(f"Advice:             {record.get('recommended_action')}")
 
@@ -291,11 +304,11 @@ def display_list(records: list[dict]) -> None:
     print(f"\n{'Checked':<12}{'Part':<20}{'Odometer':>10}  {'Urgency':<8}{'Service by':<12}Outcome")
     for r in records:
         urgency = r.get("urgency_score")
-        print(f"{str(r.get('check_date')):<12}"
+        print(f"{_show_date(r.get('check_date')):<12}"
               f"{str(r.get('part_name'))[:19]:<20}"
               f"{r.get('current_odometer', 0):>10,}  "
               f"{(str(urgency) if urgency is not None else '-'):<8}"
-              f"{str(r.get('recommended_service_date')):<12}"
+              f"{_show_date(r.get('recommended_service_date')):<12}"
               f"{r.get('outcome')}")
 
 

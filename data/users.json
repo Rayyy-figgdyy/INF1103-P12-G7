@@ -33,5 +33,12 @@
     "car_model": "Honda Civic 2025",
     "car_condition": "Brand New",
     "coe_expiry_date": "2030-01-01"
+  },
+  {
+    "name": "99",
+    "license_plate": "SL3T",
+    "car_model": "Honda Civic 2025",
+    "car_condition": "Brand New",
+    "coe_expiry_date": "2030-09-09"
   }
 ]
