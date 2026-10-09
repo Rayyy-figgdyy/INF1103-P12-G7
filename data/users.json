@@ -61,5 +61,19 @@
     "car_model": "Honda Civic 2025",
     "car_condition": "Brand New",
     "coe_expiry_date": "2030-01-01"
+  },
+  {
+    "name": "DD",
+    "license_plate": "SBA123A",
+    "car_model": "Honda Civic 2025",
+    "car_condition": "Brand New",
+    "coe_expiry_date": "2030-01-01"
+  },
+  {
+    "name": "dd",
+    "license_plate": "SNN1234S",
+    "car_model": "Honda Civic 2025",
+    "car_condition": "Brand New",
+    "coe_expiry_date": "2030-01-01"
   }
 ]
