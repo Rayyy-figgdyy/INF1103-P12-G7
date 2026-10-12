@@ -1,17 +1,17 @@
 {
-  "_note": "The 4 cars in our test environment. Replace each 'schedule' with the intervals from that car's manual (km and months, whichever comes first). 'manual' is the PDF the AI reads.",
+  "_note": "The 4 cars in our test environment. 'schedule' = how often each part needs servicing (km and months, whichever comes first). 'Tyres' means the tyre ROTATION interval. 'manual' is the PDF the AI reads.",
   "cars": [
     {
       "model": "Honda Civic 2025",
       "condition": "Brand New",
       "manual": "manuals/honda_civic_2025.pdf",
       "schedule": {
-        "Engine Oil":   {"km": 10000,  "months": 12},
-        "Brake Pads":   {"km": 40000,  "months": 24},
-        "Brake Fluid":  {"km": 40000,  "months": 36},
-        "Spark Plugs":  {"km": 100000, "months": 72},
-        "Coolant":      {"km": 100000, "months": 60},
-        "Battery":      {"km": 60000,  "months": 36}
+        "Engine Oil":        {"km": 10000,  "months": 12},
+        "Brake Pads":        {"km": 40000,  "months": 24},
+        "Spark Plugs":       {"km": 100000, "months": 72},
+        "Tyres":             {"km": 10000,  "months": 12},
+        "Engine Air Filter": {"km": 30000,  "months": 24},
+        "Coolant":           {"km": 100000, "months": 60}
       }
     },
     {
@@ -19,12 +19,12 @@
       "condition": "Used",
       "manual": "manuals/mazda_3_hatchback_2020.pdf",
       "schedule": {
-        "Engine Oil":   {"km": 10000,  "months": 12},
-        "Brake Pads":   {"km": 40000,  "months": 24},
-        "Brake Fluid":  {"km": 40000,  "months": 24},
-        "Spark Plugs":  {"km": 75000,  "months": 60},
-        "Coolant":      {"km": 100000, "months": 60},
-        "Battery":      {"km": 60000,  "months": 36}
+        "Engine Oil":        {"km": 10000,  "months": 12},
+        "Brake Pads":        {"km": 40000,  "months": 24},
+        "Spark Plugs":       {"km": 75000,  "months": 60},
+        "Tyres":             {"km": 16000,  "months": 12},
+        "Engine Air Filter": {"km": 56000,  "months": 36},
+        "Coolant":           {"km": 100000, "months": 60}
       }
     },
     {
@@ -32,12 +32,12 @@
       "condition": "Used",
       "manual": "manuals/hyundai_elantra_2021.pdf",
       "schedule": {
-        "Engine Oil":   {"km": 10000,  "months": 12},
-        "Brake Pads":   {"km": 40000,  "months": 24},
-        "Brake Fluid":  {"km": 40000,  "months": 24},
-        "Spark Plugs":  {"km": 100000, "months": 72},
-        "Coolant":      {"km": 100000, "months": 60},
-        "Battery":      {"km": 60000,  "months": 36}
+        "Engine Oil":        {"km": 10000,  "months": 12},
+        "Brake Pads":        {"km": 40000,  "months": 24},
+        "Spark Plugs":       {"km": 100000, "months": 72},
+        "Tyres":             {"km": 12000,  "months": 12},
+        "Engine Air Filter": {"km": 30000,  "months": 24},
+        "Coolant":           {"km": 100000, "months": 60}
       }
     },
     {
@@ -45,12 +45,12 @@
       "condition": "Used",
       "manual": "manuals/kia_forte.pdf",
       "schedule": {
-        "Engine Oil":   {"km": 10000,  "months": 12},
-        "Brake Pads":   {"km": 40000,  "months": 24},
-        "Brake Fluid":  {"km": 40000,  "months": 24},
-        "Spark Plugs":  {"km": 100000, "months": 72},
-        "Coolant":      {"km": 100000, "months": 60},
-        "Battery":      {"km": 60000,  "months": 36}
+        "Engine Oil":        {"km": 10000,  "months": 12},
+        "Brake Pads":        {"km": 40000,  "months": 24},
+        "Spark Plugs":       {"km": 100000, "months": 72},
+        "Tyres":             {"km": 13000,  "months": 12},
+        "Engine Air Filter": {"km": 39000,  "months": 36},
+        "Coolant":           {"km": 100000, "months": 60}
       }
     }
   ]

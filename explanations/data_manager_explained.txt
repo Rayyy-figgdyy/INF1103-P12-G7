@@ -1,0 +1,484 @@
+DATA_MANAGER.PY EXPLAINED
+A plain-English guide for teammates who don't write much code
+
+
+WHAT THIS FILE IS FOR
+
+data_manager.py is the app's memory. Anything the app needs to remember
+after you close it (user profiles, finished maintenance checks, and the list
+of supported cars) is kept in files inside the data/ folder, and this file is
+the only part of the app that reads or writes those files.
+
+Think of it as a filing clerk. The rest of the app never opens the filing
+cabinet itself. It asks the clerk "please file this check" or "please fetch
+the profile for plate SBA1234A", and the clerk does it.
+
+This file does not make any decisions about cars or risk, and it never prints
+anything on screen. It only saves, loads and looks things up.
+
+
+THE THREE DATA FILES
+
+All three files use JSON, a simple text format for storing lists and labelled
+values. You can open them in any text editor (like Notepad) to look inside.
+
+1. data/cars.json
+
+   The 4 cars our app supports: Honda Civic 2025 (Brand New), Mazda 3
+   Hatchback 2020, Hyundai Elantra 2021 and Kia Forte (all Used). For each
+   car it stores whether it is Brand New or Used, where its owner's manual
+   PDF is, and a service schedule for 6 parts: Engine Oil, Brake Pads, Spark
+   Plugs, Tyres, Engine Air Filter and Coolant. The whole file is one big
+   box called "cars" holding the list. One car looks like this (schedule
+   shortened):
+
+       {
+         "model": "Honda Civic 2025",
+         "condition": "Brand New",
+         "manual": "manuals/honda_civic_2025.pdf",
+         "schedule": {
+           "Engine Oil": {"km": 10000, "months": 12},
+           "Coolant": {"km": 100000, "months": 60}
+         }
+       }
+
+   "Engine Oil": {"km": 10000, "months": 12} means: change the engine oil
+   every 10,000 km or every 12 months, whichever comes first.
+
+   This file is written by our team and IS stored in Git.
+
+2. data/users.json
+
+   One profile per user. The license plate is what tells profiles apart:
+   no two profiles can have the same plate. One entry looks like:
+
+       {
+         "name": "Darren",
+         "license_plate": "SBA1234A",
+         "car_model": "Honda Civic 2025",
+         "car_condition": "Brand New",
+         "coe_expiry_date": "2030-01-01"
+       }
+
+   This file is NOT in Git. The app creates it the first time someone
+   registers. It is listed in .gitignore, so it stays on each computer.
+
+3. data/maintenance_records.json
+
+   Every finished maintenance check, oldest first, newest at the end. A
+   saved check holds what the user typed, the service interval, the AI's
+   answer and the results of our business rules. A shortened example:
+
+       {
+         "license_plate": "SBA1234A",
+         "car_model": "Honda Civic 2025",
+         "part_name": "Engine Oil",
+         "check_date": "2026-10-12",
+         "last_service_date": "2025-10-01",
+         "last_service_mileage": 20000,
+         "current_odometer": 29500,
+         "interval_km": 10000,
+         "interval_months": 12,
+         "urgency_score": 7,
+         "risk_score": 80,
+         "outcome": "..."
+       }
+
+   This file is NOT in Git either. The app creates it the first time a check
+   is saved, and it is also listed in .gitignore.
+
+
+WHERE IT FITS
+
+Our app has four "managers", and a check flows through them in this order:
+
+    io_manager  ->  ai_manager  ->  logic_manager  ->  data_manager
+
+io_manager talks to the user, ai_manager asks the AI, logic_manager applies
+our business rules, and data_manager (this file) stores the result. The
+managers never call each other directly. main.py is the conductor: it calls
+each manager in turn and passes the results along. So in practice, only
+main.py ever uses this file.
+
+Some of the places main.py uses it:
+
+1. Logging in: find_user_by_plate.
+2. Registering: list_car_models, load_users (to spot plates already taken),
+   find_car (to get Brand New or Used) and save_user.
+3. Checking a part: get_manual_path, list_parts, get_service_interval,
+   load and get_last_odometer, find_repeat, and finally save.
+4. History and urgent items: query.
+5. Updating a profile: save_user.
+6. Deleting a profile: query (to count the checks), delete_user and then
+   delete_records_for_plate.
+
+
+WALKTHROUGH
+
+The file starts by working out where the data/ folder is. It builds the
+addresses from where data_manager.py itself sits, so the app finds its data
+no matter which folder you start it from (this matters when running in
+Docker). The three addresses are stored in:
+
+    DATA_FILE    for maintenance_records.json
+    USERS_FILE   for users.json
+    CARS_FILE    for cars.json
+
+It also sets two fixed values:
+
+    VALID_CONDITIONS = ("Brand New", "Used")
+    REPEAT_FIELDS    = the five details used to spot a repeated check:
+                       license_plate, part_name, last_service_date,
+                       last_service_mileage, current_odometer
+
+Now the functions, in the order they appear in the file.
+
+read_json(path)
+
+    What it does: opens one file and turns the JSON text into Python data.
+    Needs: the file's address, for example CARS_FILE.
+    Gives back: the contents, or None ("nothing") if the file doesn't exist,
+    is empty, or can't be read. If the file can't be opened or the JSON is
+    broken, it writes an error message to the log instead of crashing.
+    Example: read_json(CARS_FILE) gives back {"cars": [ ...4 cars... ]}.
+
+read_list(path)
+
+    What it does: uses read_json, then makes sure the result is a list.
+    Needs: the file's address (DATA_FILE or USERS_FILE).
+    Gives back: the list from the file. If the file was missing, broken or
+    held something that isn't a list, it gives back an empty list [] so the
+    app can carry on. The "not a list" case is logged.
+    Example: on a brand-new install, read_list(USERS_FILE) gives back [].
+
+write_list(path, items)
+
+    What it does: saves a whole list to a file, replacing what was there.
+    It creates the data/ folder first if it doesn't exist yet. The file is
+    written neatly indented so people can read it.
+    Needs: the file's address and the complete list to save.
+    Gives back: True if it worked, False if it didn't (for example, the disk
+    is full). A failure is logged.
+
+load()
+
+    What it does: reads every saved maintenance check.
+    Needs: nothing.
+    Gives back: the list of checks, oldest first, or [] if there are none.
+
+save(record)
+
+    What it does: adds one finished check to maintenance_records.json. It
+    reads all the saved checks, adds the new one at the end, and writes the
+    whole list back.
+    Needs: one finished check, for example
+        {"license_plate": "SBA1234A", "part_name": "Engine Oil", ...}
+    Gives back: True if saved, False if writing failed.
+
+query(filter_fn)
+
+    What it does: finds the saved checks that pass a test you give it.
+    Needs: a small test that looks at one check and says True (keep it) or
+    False (skip it). For example, to find all coolant checks:
+        query(lambda r: r["part_name"] == "Coolant")
+    Gives back: the checks that passed, in the order they were saved, or []
+    if none did.
+    Example: main.py's history screen uses
+        query(lambda r: r.get("license_plate") == "SBA1234A")
+    to get every check for that car.
+
+same_inputs(record_a, record_b)
+
+    What it does: compares two checks on the five REPEAT_FIELDS only.
+    Needs: two checks.
+    Gives back: True if all five match, False as soon as one differs.
+    Other details (like the check date) are not compared.
+
+find_repeat(record)
+
+    What it does: asks "has the user typed in exactly these details before?"
+    Needs: the new check the user just typed in.
+    Gives back: the most recent saved check with the same five details, or
+    None if this is the first time. Because new checks always go at the end
+    of the file, the last match is the newest.
+    Why it exists: if the answer is already saved, main.py shows it again
+    instead of asking the AI. Same inputs give the same answer, and we don't
+    use up AI requests for nothing.
+
+get_last_odometer(records, license_plate)
+
+    What it does: finds the highest odometer reading saved for one car.
+    Needs: the list of saved checks (main.py passes load()) and a plate.
+    Gives back: the biggest reading in km, or None if this car has no
+    readings yet. Readings from every part count, because the odometer
+    belongs to the whole car. A reading that isn't a whole number (for
+    example someone typed "45000" in quotes by hand) is ignored.
+    Example: if SBA1234A has an Engine Oil check at 29500 km and a Coolant
+    check at 31000 km, it gives back 31000. main.py hands this to io_manager
+    so the user can't type a lower reading for the next check.
+
+delete_records_for_plate(license_plate)
+
+    What it does: deletes every saved check for one car. It keeps all the
+    other cars' checks and writes them back. If nothing matched, the file
+    isn't touched.
+    Needs: the plate, for example "SBA1234A".
+    Gives back: how many checks were deleted, or 0 if none matched or the
+    file couldn't be saved.
+
+load_users()
+
+    What it does: reads every user profile.
+    Needs: nothing.
+    Gives back: the list of profiles, or [] if there are none.
+
+find_user_by_plate(license_plate)
+
+    What it does: looks up one profile by its plate (used when logging in).
+    Needs: the plate, for example "SBA1234A".
+    Gives back: that profile, or None if no one has registered that plate.
+
+save_user(user)
+
+    What it does: creates a new profile, or updates an existing one. It
+    keeps every profile with a DIFFERENT plate, adds this one at the end,
+    and saves. If a profile with the same plate was already there, its old
+    version is left out, so it gets replaced.
+    Needs: the full profile, which must include "license_plate".
+    Gives back: True if saved, False if writing failed.
+    Example: changing Darren's COE date and calling save_user replaces his
+    old SBA1234A profile with the new one.
+
+delete_user(license_plate)
+
+    What it does: removes the profile with this plate. It does NOT delete
+    that car's checks; main.py does that next with delete_records_for_plate.
+    Needs: the plate.
+    Gives back: True if deleted. False if no profile had that plate, or if
+    saving failed.
+
+is_valid_interval(entry)
+
+    What it does: checks that one line of a car's schedule is written
+    correctly.
+    Needs: one schedule line, for example {"km": 10000, "months": 12}.
+    Gives back: True only if both "km" and "months" are there and are whole
+    numbers above zero. {"km": 0, "months": 12} or {"km": "10000"} give False.
+
+is_valid_car(car)
+
+    What it does: checks that one car entry in cars.json has what we need.
+    Needs: one car entry.
+    Gives back: True only if it has a model name that isn't blank, a
+    condition of exactly "Brand New" or "Used", a manual file name, and a
+    schedule.
+
+load_cars()
+
+    What it does: reads cars.json and gives back a cleaned-up list of cars.
+    Needs: nothing.
+    Gives back: the valid cars, in the same order as the file. Along the way:
+    1. If the file is missing, broken, or has no "cars" list, it gives back
+       [] (the "no cars list" case is logged).
+    2. A car that fails is_valid_car is skipped, and the skip is logged. The
+       other cars still load.
+    3. Inside each good car, a schedule line that fails is_valid_interval is
+       quietly dropped. This is NOT logged; that part simply won't be
+       offered for that car.
+    It works on a copy of each car, so the data it read isn't changed.
+    Note: this function reads the file fresh every time it is called, and
+    all five car functions below use it (some through find_car).
+
+list_car_models()
+
+    What it does: lists the car names to choose from when registering.
+    Gives back: ["Honda Civic 2025", "Mazda 3 Hatchback 2020",
+    "Hyundai Elantra 2021", "Kia Forte"] (same order as cars.json).
+
+find_car(car_model)
+
+    What it does: finds one car's full entry by its name. The name must match
+    exactly, including capitals.
+    Needs: the car name, for example "Honda Civic 2025".
+    Gives back: that car's entry, or None if it isn't in our list.
+
+list_parts(car_model)
+
+    What it does: lists the parts this car has a service interval for.
+    Needs: the car name.
+    Gives back: the part names in A to Z order, or [] if the car isn't found.
+    Example: list_parts("Honda Civic 2025") gives back
+        ["Brake Pads", "Coolant", "Engine Air Filter", "Engine Oil",
+         "Spark Plugs", "Tyres"]
+
+get_service_interval(car_model, part_name)
+
+    What it does: looks up how often one part needs servicing on one car, and
+    renames the labels to the names the rest of the app uses.
+    Needs: the car name and the part name.
+    Gives back: for example
+        get_service_interval("Honda Civic 2025", "Engine Oil")
+    gives back
+        {"interval_km": 10000, "interval_months": 12}
+    or None if the car or the part isn't in cars.json.
+
+get_manual_path(car_model)
+
+    What it does: works out the full address of the car's manual PDF and
+    checks the file really exists.
+    Needs: the car name.
+    Gives back: the full address, for example
+        .../manuals/honda_civic_2025.pdf
+    or None if the car isn't in our list or the PDF isn't there. A missing
+    PDF is logged.
+
+
+WHAT HAPPENS WHEN A FILE IS MISSING OR DAMAGED
+
+The golden rule of this file: never crash because of a file. Here is what
+actually happens in each case.
+
+1. A file doesn't exist yet (normal on first run). Reading it gives back
+   "nothing" (an empty list for users and checks, no cars for cars.json).
+   No error is logged, because this is expected. The file is created the
+   first time something is saved.
+
+2. A file is empty. Treated the same as a missing file.
+
+3. A file can't be opened (for example, no permission) or its JSON is broken
+   (for example, someone deleted a comma by hand). An error is logged, such
+   as
+       [ERROR] data_manager: Could not read .../users.json (missing
+       permission or corrupt JSON): ...
+   and the app carries on as if the file were empty.
+
+4. A file holds the wrong kind of thing (for example users.json holds one
+   profile instead of a list of profiles). An error is logged and the
+   contents are ignored.
+
+5. Saving fails (for example, the disk is full). The error is logged and the
+   function gives back False (or 0 for delete_records_for_plate), so main.py
+   can tell the user, for example "the assessment could not be saved".
+
+6. cars.json has a bad car entry. That car is skipped and logged; the rest
+   load normally. A bad schedule line is dropped without a log message.
+
+7. A car's manual PDF is missing. get_manual_path logs it and gives back
+   None, and main.py tells the user the part can't be checked.
+
+One thing to be aware of: if users.json or maintenance_records.json is
+damaged, the app treats it as empty. The next time something is saved to
+that file, the whole file is rewritten with only what the app currently
+knows, so the damaged contents are replaced. If you hand-edit these files,
+keep a backup.
+
+
+A WORKED EXAMPLE
+
+Darren (plate SBA1234A, Honda Civic 2025) checks his Engine Oil.
+
+1. main.py asks get_service_interval("Honda Civic 2025", "Engine Oil") and
+   gets back {"interval_km": 10000, "interval_months": 12}.
+
+2. Darren types: last service on 2025-10-01, odometer 20000 km at that
+   service, odometer 29500 km today.
+
+3. main.py calls find_repeat with these details. There are no saved checks
+   with the same plate, part, date, mileage and odometer, so it gives back
+   None.
+
+4. main.py sends the check through the AI and the business rules, then calls
+   save(record). save reads the saved checks (say there were 3), adds this
+   one as number 4 at the end, writes all 4 back to
+   maintenance_records.json, and gives back True.
+
+5. Later, Darren types exactly the same details again: SBA1234A, Engine Oil,
+   2025-10-01, 20000, 29500.
+
+6. This time find_repeat runs query with same_inputs as the test. Check
+   number 4 matches on all five REPEAT_FIELDS, so find_repeat gives it back.
+
+7. main.py sees an earlier answer exists, shows it to Darren, and stops. The
+   AI is not asked again and nothing new is saved, so the file still has 4
+   checks.
+
+8. If Darren had typed 29600 km instead of 29500, one of the five details
+   would differ, find_repeat would give back None, and a fresh check would
+   be made and saved.
+
+
+PYTHON IDEAS USED IN THIS FILE
+
+1. Function. A named set of steps you can reuse, like a recipe card. You
+   give it ingredients (inputs) and it hands back a dish (the result).
+
+2. Dictionary. A collection of labelled values, like a form with named boxes:
+   {"km": 10000, "months": 12}. You read a box by its label.
+
+3. List. An ordered collection, like a numbered queue. New checks join at
+   the back with .append, and [-1] means "the last one in the queue".
+
+4. None. Python's word for "nothing here", like an empty envelope. Functions
+   give it back when they couldn't find what was asked for.
+
+5. try / except. A safety net: "try these steps, and if one of these known
+   problems happens, do this instead of crashing".
+
+6. with open(...). Opens a file and closes it automatically when done, like
+   a library book that returns itself.
+
+7. JSON (json.loads and json.dump). Turns stored text into Python lists and
+   dictionaries, and back again, like translating between two languages.
+
+8. for loop. Repeats the same steps for each item in a list, like a teacher
+   marking each exam paper in the pile one by one.
+
+9. if / and / or. Making decisions. "and" means every condition must be true,
+   like a checklist where every box must be ticked.
+
+10. isinstance. Checks what kind of thing a value is (a list? a whole
+    number?), like checking a parcel's label before opening it.
+
+11. .get(...). Reads a dictionary box safely: if the box is missing you get
+    None instead of an error, like asking "is there a field called plate on
+    this form?" rather than assuming there is.
+
+12. lambda. A tiny one-line function with no name, handy for quick tests
+    such as "is this check's part Coolant?". Like a sticky note with one
+    instruction on it.
+
+13. logging. Writes problems into the app's logbook (shown on screen as
+    [ERROR] messages) instead of crashing, like a shop assistant noting a
+    problem in the daily log and carrying on serving.
+
+14. os.path. Python's toolbox for building file addresses with the right
+    slashes on Windows, Mac and Linux, like a postal service that formats
+    addresses correctly for each country.
+
+
+PROJECT RULES THIS FILE FOLLOWS
+
+1. Project brief section 2.4: this file provides save(record) to add a
+   check, load() to read all checks, and query(filter_fn) to find checks
+   that pass a test.
+
+2. Hard constraint C4: all data is kept in flat files (plain JSON text files
+   in data/, no database server), so the app behaves the same way every time
+   it runs.
+
+3. Never crash on a missing or damaged file: log the problem and carry on
+   with an empty list (or None).
+
+4. Business rule 2: how often a part needs servicing comes only from the
+   stored manufacturer schedule in cars.json, never from the user or the AI.
+
+5. Separation of layers: this file only saves, loads and looks things up. It
+   makes no business decisions, never prints to the screen, and is only
+   called by main.py.
+
+6. One profile per license plate. Deleting a profile also deletes all of
+   that car's saved checks (main.py calls delete_user and then
+   delete_records_for_plate).
+
+7. Repeated input: if the user enters the same five details as a saved
+   check, the saved answer is reused instead of asking the AI again.

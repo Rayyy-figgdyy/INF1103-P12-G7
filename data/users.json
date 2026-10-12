@@ -1,79 +1,10 @@
 [
+  
   {
-    "name": "Darren",
-    "license_plate": "SNN1212N",
-    "car_model": "Honda Civic",
-    "car_condition": "Brand New",
-    "coe_expiry_date": "2029-12-12"
-  },
-  {
-    "name": "Rayson",
-    "license_plate": "SBA9087A",
-    "car_model": "Toyota Camry",
-    "car_condition": "Brand New",
-    "coe_expiry_date": "2030-06-01"
-  },
-  {
-    "name": "darren",
-    "license_plate": "SNN9999N",
-    "car_model": "Honda Civic 2025",
-    "car_condition": "Brand New",
-    "coe_expiry_date": "2029-01-01"
-  },
-  {
-    "name": "darren",
-    "license_plate": "SJJ1919D",
+    "name": "Jason Tan",
+    "license_plate": "SMZ2020K",
     "car_model": "Mazda 3 Hatchback 2020",
     "car_condition": "Used",
-    "coe_expiry_date": "2030-09-09"
-  },
-  {
-    "name": "jj",
-    "license_plate": "SNN1234A",
-    "car_model": "Honda Civic 2025",
-    "car_condition": "Brand New",
-    "coe_expiry_date": "2030-01-01"
-  },
-  {
-    "name": "99",
-    "license_plate": "SL3T",
-    "car_model": "Honda Civic 2025",
-    "car_condition": "Brand New",
-    "coe_expiry_date": "2030-09-09"
-  },
-  {
-    "name": "bb",
-    "license_plate": "SXX1234X",
-    "car_model": "Mazda 3 Hatchback 2020",
-    "car_condition": "Used",
-    "coe_expiry_date": "2030-02-20"
-  },
-  {
-    "name": "ss",
-    "license_plate": "SBA1234Z",
-    "car_model": "Honda Civic 2025",
-    "car_condition": "Brand New",
-    "coe_expiry_date": "2030-02-02"
-  },
-  {
-    "name": "Kai",
-    "license_plate": "SZZ12Z",
-    "car_model": "Honda Civic 2025",
-    "car_condition": "Brand New",
-    "coe_expiry_date": "2030-01-01"
-  },
-  {
-    "name": "DD",
-    "license_plate": "SBA123A",
-    "car_model": "Honda Civic 2025",
-    "car_condition": "Brand New",
-    "coe_expiry_date": "2030-01-01"
-  },
-  {
-    "name": "dd",
-    "license_plate": "SNN1234S",
-    "car_model": "Honda Civic 2025",
-    "car_condition": "Brand New",
-    "coe_expiry_date": "2030-01-01"
+    "coe_expiry_date": "2030-06-15"
   }
 ]

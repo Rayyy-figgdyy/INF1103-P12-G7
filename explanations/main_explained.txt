@@ -1,0 +1,448 @@
+MAIN.PY EXPLAINED
+A plain-English guide for teammates who don't code much
+
+This guide walks through main.py, the file that starts our Car Maintenance &
+Service Risk Tracker. You don't need to know Python to follow it. Section 5
+explains every Python idea used in the file, so jump there first if a word
+like "dictionary" or "loop" is new to you.
+
+
+1. WHAT THIS FILE IS FOR
+
+main.py is the starting point of the app. You run it by typing:
+
+    python main.py
+
+Think of the app as a small car workshop. The other four files are the
+specialists: a receptionist who talks to the customer (io_manager), a
+mechanic who reads the manual (ai_manager), a supervisor who applies the
+workshop rules (logic_manager) and a filing clerk (data_manager). main.py is
+the shop manager. It does no specialist work itself. It decides who does
+what, in which order, and passes the paperwork from one person to the next.
+
+In practice main.py does three things:
+
+    1. Shows the main menu again and again until the user chooses Exit.
+    2. Handles accounts: log in, register, view, update and delete a profile.
+    3. Runs a part check (for example Engine Oil) through the whole pipeline:
+       questions, then the AI, then our rules, then saving and showing it.
+
+
+2. WHERE IT FITS
+
+Our project brief splits the app into "four managers", like stations on a
+factory line:
+
+    User -> io_manager -> ai_manager -> logic_manager -> data_manager
+            (screen and   (asks the     (applies our      (saves and
+             keyboard)     AI)           business rules)   loads files)
+
+main.py sits above all of them. It is the only file that talks to all four,
+and the four managers never talk to each other directly. So when, for
+example, io_manager needs to know the car's last odometer reading, it does
+not open the data file itself. main.py asks data_manager for it and then
+hands the number to io_manager.
+
+What main.py receives: the user's menu choices and answers (through
+io_manager), the AI's assessment (from ai_manager), the facts and decisions
+(from logic_manager) and saved profiles and checks (from data_manager).
+
+What main.py hands on: a finished "record" for each check, which it gives to
+data_manager to save and to io_manager to show on screen.
+
+
+3. WALKTHROUGH, FUNCTION BY FUNCTION
+
+The functions appear below in the same order as in the file. In the
+examples we use a user called Alex, license plate SBA1234A, who drives a
+Mazda 3 Hatchback 2020 (Used) with a COE expiring on 31/05/2030. Today is
+12/10/2026.
+
+A note on dates: users always type and see dates as DD/MM/YYYY, for example
+12/10/2026. Inside the files the app stores them as YYYY-MM-DD, for example
+2026-10-12. io_manager does the converting; main.py only ever handles the
+stored form.
+
+At the top of the file are the imports. They load Python's own date tools
+(datetime) and error-reporting tools (logging), plus our four manager files,
+so main.py can call their functions.
+
+
+3.1 build_record
+
+What it does: takes one check and sends it through the "brain" of the app
+in three steps:
+
+    1. ai_manager.process asks the AI to read the car's manual and add an
+       urgency score (1 to 10), a confidence level (High, Medium or Low), a
+       short summary, advice and where in the manual it looked. If no AI
+       can answer, ai_manager fills in "AI unavailable" values instead, so
+       the app never crashes here.
+    2. logic_manager.evaluate works out our own facts: km and days since
+       the last service, whether the part is overdue, whether it is a
+       safety-critical part, days until the COE expires and the date it
+       should be serviced by.
+    3. logic_manager.score gives a risk score from 0 to 100 (only used to
+       sort the urgent list) and logic_manager.route gives the final
+       outcome, such as "URGENT - Service immediately".
+
+What it needs: the raw record (what the user typed plus the car's details)
+and the location of the car's manual PDF.
+
+What it gives back: the finished record, ready to save and show.
+
+Example: Alex's Engine Oil check goes in with 69,500 km on the odometer and
+comes out with extra boxes such as
+
+    km_since_service: 9500
+    risk_score: 60
+    outcome: MONITOR - Service approaching
+
+
+3.2 check_part_flow
+
+What it does: menu option 1, "Check a part". Step by step:
+
+    1. Finds the car's manual PDF. If it is missing, it says so and goes
+       back to the menu.
+    2. Gets the list of parts that have a stored service interval in
+       cars.json, shown in A to Z order. For Alex's Mazda that is Brake
+       Pads, Coolant, Engine Air Filter, Engine Oil, Spark Plugs, Tyres.
+       If there is no list, it says so and stops.
+    3. Asks which part to check, then looks up its interval. For Engine Oil
+       on the Mazda that is every 10,000 km or 12 months.
+    4. Asks data_manager for the highest odometer reading saved for this
+       car, so the question screen can refuse a reading that goes
+       backwards.
+    5. Asks for the details from the last workshop invoice: date of last
+       service, odometer at last service and today's odometer reading.
+    6. Puts everything into one record, including today's date as the
+       check date (stored as 2026-10-12).
+    7. Checks whether exactly the same details were typed before (same
+       plate, part, last service date, last service km and current km). If
+       so, it shows the saved answer instead of asking the AI again. This
+       saves time and AI usage, and the user gets the same answer as
+       before.
+    8. Otherwise it shows "Asking the AI to check this part against your
+       manual...", calls build_record, saves the result and shows it. If
+       saving fails it shows a warning, but the result is still shown.
+
+What it needs: the logged-in user's profile.
+
+What it gives back: nothing. Its job is to show things and save a file.
+
+
+3.3 history_flow
+
+What it does: menu option 2, "View my maintenance history". It asks
+data_manager for every saved check whose license plate is the user's and
+lists them as a table. If there are none it explains why, for example:
+
+    No checks saved for SBA1234A yet. Choose 1 to check a part -- it will
+    appear here.
+
+What it needs: the logged-in user's profile.
+
+What it gives back: nothing.
+
+
+3.4 urgent_flow
+
+What it does: menu option 3, "View my urgent / overdue items". It keeps
+only this user's checks whose outcome starts with URGENT, FLAGGED, DUE SOON,
+COE EXPIRED or NEEDS MANUAL REVIEW (logic_manager.is_urgent decides this).
+It then sorts them by risk score, highest first (for example 95, then 80,
+then 70). A check without a risk score counts as 0. If nothing needs
+attention it says so and suggests option 2.
+
+What it needs: the logged-in user's profile.
+
+What it gives back: nothing.
+
+Example: Alex's Engine Oil check above ended as "MONITOR - Service
+approaching", so it would not appear here. An overdue Brake Pads check
+("URGENT - Safety-critical part overdue") would.
+
+
+3.5 login_flow
+
+What it does: asks for a license plate and looks up the matching profile.
+If none is found it shows "No profile for SBA1234A. Choose 'Register new
+profile' first." If found it shows "Welcome back, Alex!".
+
+What it needs: nothing.
+
+What it gives back: the user's profile (so they are now logged in), or
+nothing (None) if the plate was not found (so they stay logged out).
+
+
+3.6 register_flow
+
+What it does: creates a new profile.
+
+    1. Gets the list of cars from data/cars.json. If it is missing, the
+       user can't register yet and it stops.
+    2. Collects every license plate already registered, so the question
+       screen can refuse a duplicate. The plate is what identifies an
+       account, so two people can't share one.
+    3. Asks for a name and plate, then which car they drive.
+    4. Fills in "Brand New" or "Used" from cars.json (the user is not asked
+       this; the Mazda is listed as Used).
+    5. Asks for the COE expiry date, for example 31/05/2030, stored as
+       2030-05-31.
+    6. Saves the profile, shows it, and the user is now logged in.
+
+What it needs: nothing.
+
+What it gives back: the new profile, or None if the car list was missing or
+saving failed.
+
+
+3.7 update_profile_flow
+
+What it does: lets the user change their name and COE expiry date. The
+plate and car can't be changed. io_manager asks the questions and hands
+back an edited copy; main.py saves it and shows the new profile.
+
+What it needs: the current profile.
+
+What it gives back: the updated profile, or the old one unchanged if saving
+failed.
+
+
+3.8 delete_profile_flow
+
+What it does: deletes the profile and every saved check for that plate,
+after asking for confirmation, for example:
+
+    Permanently delete SBA1234A and its 3 maintenance record(s)? (y/n)
+
+If the user says no, nothing is deleted. If yes, it deletes the profile
+first, and only if that worked does it delete the saved checks too.
+
+What it needs: the logged-in user's profile.
+
+What it gives back: None if deleted (so the user is logged out), or the
+same profile if they changed their mind or the delete failed.
+
+
+3.9 hide_google_notices
+
+What it does: Google's AI library prints its own warnings, which would
+clutter the screen. This small "filter" looks at each log message before
+it is shown and hides it only if it came from Google's library AND is less
+serious than an error. Real errors from Google, and all of our own app's
+messages, are still shown.
+
+What it needs: one log message.
+
+What it gives back: True (show it) or False (hide it).
+
+
+3.10 main
+
+What it does: runs the whole app.
+
+    1. Sets up logging, the way errors and warnings are reported. Messages
+       look like "[WARNING] ai_manager: ..." and only warnings and errors
+       are shown. It attaches hide_google_notices as a filter.
+    2. Starts with nobody logged in (current_user is None).
+    3. Repeats forever: show the right menu, read the choice, run the
+       matching function.
+
+Logged-out menu:
+
+    1) Login                 runs login_flow
+    2) Register new profile  runs register_flow
+    3) Exit                  says "Goodbye!" and ends the app
+
+Logged-in menu:
+
+    1) Check a part                       runs check_part_flow
+    2) View my maintenance history        runs history_flow
+    3) View my urgent / overdue items     runs urgent_flow
+    4) View my profile                    shows the profile
+    5) Update my profile                  runs update_profile_flow
+    6) Delete my profile                  runs delete_profile_flow
+    7) Logout                             forgets the current user
+    8) Exit                               says "Goodbye!" and ends the app
+
+After options 1 to 4 the app waits for the user to press Enter, so the
+results are not pushed off the screen by the menu. Any other input shows
+"Invalid choice. Please enter a number from the menu."
+
+If the user presses Ctrl+C, or there is no keyboard to read from (for
+example running Docker without -it), the app exits politely with a short
+message instead of crashing.
+
+What it needs: nothing. What it gives back: nothing; the app ends when
+main ends.
+
+The last two lines of the file start main only when the file is run
+directly with python main.py, not when our test files load it to test the
+functions.
+
+
+4. A WORKED EXAMPLE: ALEX LOGS IN AND CHECKS ENGINE OIL
+
+    1. Alex runs python main.py. main sets up logging and shows the
+       logged-out menu. Alex types 1.
+    2. login_flow asks for the plate. Alex types SBA1234A. data_manager
+       finds the profile and the screen says "Welcome back, Alex!". main
+       now remembers Alex's profile in current_user.
+    3. The logged-in menu appears. Alex types 1, so main calls
+       check_part_flow with Alex's profile.
+    4. check_part_flow finds the Mazda's manual PDF, lists the six parts
+       and Alex picks Engine Oil. The interval is 10,000 km or 12 months.
+    5. Alex's last saved reading was 65,000 km, so main passes 65,000 to
+       the question screen. Alex enters: last service 12/04/2026, odometer
+       at last service 60,000 km, current odometer 69,500 km. A reading
+       below 65,000 would have been refused.
+    6. The record is built with check date 2026-10-12. These details have
+       not been typed before, so no repeat is found.
+    7. build_record sends it to the AI. Suppose the AI answers urgency 6,
+       confidence High.
+    8. logic_manager works out: 9,500 km and 183 days since the service,
+       not overdue (both are under 10,000 km and 365 days), not a
+       safety-critical part, and a service-by date of 2026-10-21. Risk
+       score is 6 x 10 = 60. The outcome is "MONITOR - Service
+       approaching".
+    9. data_manager saves the record and io_manager shows it, with the
+       service-by date displayed as 21/10/2026.
+    10. main waits for Alex to press Enter, then shows the menu again.
+
+
+5. PYTHON IDEAS USED IN THIS FILE
+
+Comment. Text after a # sign is a note for humans; Python ignores it. Like
+a sticky note on a page.
+
+Docstring. Text between two sets of three quote marks at the top of a file
+or function. A longer description that Python also ignores. Like the label
+on a folder.
+
+Import. import io_manager loads another file so we can use its functions,
+written as io_manager.display_message(...). Like taking a tool out of a
+toolbox.
+
+Variable. A labelled box that stores a value. plate = "SBA1234A" puts that
+text in a box called plate. One = sign means "store".
+
+String. A piece of text, always inside quote marks, such as "Engine Oil".
+
+Function. A named set of steps, like a recipe card, starting with def. The
+indented lines underneath are the steps; the names in brackets are the
+inputs it needs.
+
+Calling a function. Writing its name with brackets, such as login_flow(),
+means "do those steps now".
+
+Return. Ends a function and hands a result back to whoever called it, like
+a waiter bringing back your order. A bare return just leaves early, which
+here means going back to the menu.
+
+None. Python's word for "nothing / no value". We use it to mean "nobody is
+logged in" or "not found".
+
+True and False. Python's words for yes and no.
+
+If / elif / else. A decision: do something only if a condition is true.
+elif means "else if" and is checked only when the ones above failed. Like a
+receptionist directing you to the right counter.
+
+Comparisons. == means "is equal to" and != means "is not equal to". The
+menu choice is text, so main compares it with "1", not the number 1.
+
+and / or / not. Join conditions: "both true", "either true", "the opposite".
+"not parts" is true when the list is empty.
+
+While loop. while True repeats forever until a break or return, like a
+shop that keeps serving customers until closing time. main's menu works
+this way.
+
+For loop. for x in items repeats once for each item, like ticking through a
+checklist. main uses one to attach the filter to each log handler.
+
+List. Items in order, written [a, b, c], like a numbered shopping list. The
+parts and the saved checks come back as lists. len(...) counts the items.
+
+Dictionary. Values looked up by name, written {"key": value}, like a form
+with labelled boxes. record["part_name"] reads one box (it might hold
+"Engine Oil"). Each profile and each check is a dictionary.
+
+.get. record.get("x") is like record["x"] but gives None instead of
+crashing when the box doesn't exist. record.get("risk_score", 0) gives 0
+instead.
+
+Copy and update. dict(enriched) makes a photocopy of a dictionary so the
+original is not scribbled on. .update(...) copies every box from one
+dictionary into another, like stapling an extra page onto a form.
+
+Set. Written {x for x in ...}. Like a list but with no repeats and no
+order, and very quick to ask "is this item in it?". Used for the taken
+license plates.
+
+Lambda. lambda r: ... is a tiny one-line function with no name, written on
+the spot. lambda r: r.get("license_plate") == "SBA1234A" means "for each
+record r, keep it if its plate is SBA1234A". It is handed to
+data_manager.query as a filter.
+
+Sort. list.sort(key=..., reverse=True) puts a list in order. key says what
+to sort by (the risk score) and reverse=True means largest first.
+
+F-string. Text with a value slotted into curly brackets. If name holds
+"Alex", f"Welcome back, {name}!" becomes "Welcome back, Alex!". "\n" inside
+text starts a new line.
+
+Try / except. "Try this; if a particular error happens, do this instead of
+crashing." Like a safety net under a trapeze. main uses it to catch Ctrl+C
+and a missing keyboard.
+
+Type hints. Notes like the ones below say what kind of value is expected or
+handed back. Python doesn't enforce them; they are documentation for humans.
+
+    user: dict            the input "user" should be a dictionary
+    -> str                the function hands back text
+    -> None               the function hands nothing back (it just does a job)
+
+Logging. Python's built-in way of reporting warnings and errors with a
+label saying which file they came from. A "handler" is what actually writes
+the messages out, and a "filter" decides which ones get through.
+
+if __name__ == "__main__". Python sets __name__ to "__main__" only for the
+file you ran directly. So this line means "start the app only if someone
+ran this file", not when a test file loads it.
+
+
+6. PROJECT RULES THIS FILE FOLLOWS
+
+    1. Hard constraint C1, 100% procedural. main.py uses only functions,
+       no classes.
+    2. Hard constraint C2, the AI is the core engine. Every new part check
+       goes through ai_manager.process in build_record before any decision
+       is made. The only time the AI is skipped is when the user repeats
+       exactly the same details, and then the earlier AI answer is shown.
+    3. Four managers, one supervisor. main.py is the only file that calls
+       all four managers; they never call each other. That is why main.py
+       fetches the last odometer reading and the taken license plates from
+       data_manager and hands them to io_manager.
+    4. Only io_manager prints. main.py never uses print(); every message
+       goes through io_manager.display_message. The other files report
+       problems through logging, which main sets up.
+    5. No global variables. The logged-in user lives in one variable,
+       current_user, inside main and is handed to each function that needs
+       it.
+    6. Business rule 1, input validation. main.py supplies the last saved
+       odometer reading so the question screen can refuse a reading that
+       goes backwards, and supplies the taken plates so duplicates are
+       refused at registration.
+    7. Business rule 2, stored schedule. Parts and intervals come only from
+       cars.json via data_manager. If a part has no stored interval, the
+       check stops instead of guessing.
+    8. Safety-critical parts. Brake Pads and Tyres are treated as
+       safety-critical. main.py does not decide this itself; it relies on
+       logic_manager, which makes an overdue Brake Pads or Tyres check
+       URGENT whatever the AI said.
+    9. Log and continue, never crash. A missing manual, a missing car list,
+       a failed save, Ctrl+C or no keyboard all lead to a clear message
+       rather than a crash.

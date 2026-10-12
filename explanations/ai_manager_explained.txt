@@ -1,0 +1,511 @@
+AI_MANAGER.PY EXPLAINED
+A plain-English guide for teammates who don't code much
+
+This guide walks through ai_manager.py from top to bottom. You do not need
+to know Python to follow it. Code names are shown indented by 4 spaces, like
+this:
+
+    process()
+
+
+WHAT THIS FILE IS FOR
+
+ai_manager.py is the part of the app that talks to the AI. Every time a user
+checks a car part (for example, "is my engine oil due for a change?"), this
+file:
+
+1. writes a question for the AI, including the car and part details,
+2. sends that question to the AI together with the car's owner's manual,
+3. pulls the AI's answer out of its reply,
+4. checks that the answer is complete and sensible,
+5. hands the check back to the rest of the app with the answer attached.
+
+The AI's answer has five pieces: an urgency score from 1 to 10, how confident
+the AI is (High, Medium or Low), a one-line summary, a recommended action,
+and where in the manual it found the information.
+
+This file does NOT decide the final outcome (such as "URGENT" or "OK"). That
+is the job of logic_manager.py. This file only gets a good answer from the AI.
+
+The app uses two AI services. Gemini (from Google) is the main one. Groq is
+the backup. If neither answers, the app does not crash; it marks the check
+as needing a human to look at it.
+
+
+WORDS YOU WILL SEE
+
+API
+    A way for one program to talk to another over the internet. Here, our
+    app sends a question to Google's or Groq's computers and gets an answer
+    back. Think of it as a shop counter: you hand over a request in an agreed
+    format and get something back.
+
+API key
+    A secret password that proves to the AI company that we are allowed to
+    use their AI. Ours are kept in a private file called .env, which is never
+    shared or uploaded. The file holds lines like:
+
+        GEMINI_API_KEY=...
+        GROQ_API_KEY=...
+
+    It may also hold GEMINI_MODEL=... or GROQ_MODEL=... to pick a different
+    AI model than the default.
+
+client
+    A ready-made connection object that knows our key and how to talk to one
+    AI service. Like a phone with the number already saved: you just press
+    call.
+
+prompt
+    The question (the instructions and details) we send to the AI.
+
+JSON
+    A simple, strict text format for labelled information, for example:
+
+        {"urgency_score": 7, "confidence": "High"}
+
+    Programs can read it easily, so we ask the AI to answer in JSON only.
+
+token
+    The small pieces of text an AI reads and writes, roughly a short word or
+    part of a word (about 4 letters on average). AI services set their limits
+    in tokens.
+
+timeout
+    How long we wait for an answer before giving up. This file waits up to
+    60 seconds.
+
+temperature
+    A setting that controls how random the AI's answers are. A high
+    temperature makes it more creative and varied; 0 makes it give the same
+    answer to the same question as far as possible. We use 0.
+
+exception
+    Python's word for an error that happens while the app is running, such
+    as "no internet". The code "catches" exceptions so the app can carry on
+    instead of crashing.
+
+log
+    Notes the app writes about warnings and errors. In this app, main.py sets
+    them up so they appear in the terminal window as lines starting with
+    [WARNING] or [ERROR], for example:
+
+        [ERROR] ai_manager: Gemini call failed: ...
+
+    They are separate from the normal screens, which only io_manager.py
+    prints. This file never uses print() itself.
+
+
+WHERE IT FITS
+
+The app is split into four "managers" that pass a check along in order:
+
+    io_manager -> ai_manager -> logic_manager -> data_manager
+
+1. io_manager.py asks the user for the details (which part, last service
+   date and odometer reading, current odometer reading).
+2. main.py gathers those details, plus the car's model, condition, COE
+   expiry date and the service interval stored in cars.json, into one
+   record. It then calls ai_manager.process(), passing the record and the
+   location of the car's manual PDF.
+3. ai_manager.py (this file) adds the AI's answer to the record.
+4. logic_manager.py applies our business rules and decides the outcome.
+5. data_manager.py saves the finished record, and io_manager.py shows it.
+
+main.py only calls one function in this file: process(). Everything else in
+the file is used by process() behind the scenes.
+
+
+WALKTHROUGH
+
+The file starts with some fixed settings, then the functions. Here they are
+in the order they appear.
+
+1. The imports
+
+   The first lines load ready-made tools: json (reading JSON), logging
+   (writing to the log), os (reading settings such as the API keys), time
+   (pausing), pdfplumber (reading text from PDF files), dotenv (loading the
+   .env file), and the Gemini and Groq libraries.
+
+2. The fixed settings
+
+   These are names in CAPITAL LETTERS near the top. They never change while
+   the app runs, and keeping them together makes them easy to adjust.
+
+       DEFAULT_GEMINI_MODEL, DEFAULT_GROQ_MODEL
+   Which AI model to use at each company, unless .env names another.
+
+       API_TIMEOUT_SECONDS = 60
+   Give up on an AI that has not answered within 60 seconds.
+
+       RETRY_DELAY_SECONDS = 3
+   If neither AI replied, wait 3 seconds before trying again.
+
+       GEMINI_CONFIG
+   Settings sent to Gemini with every question: temperature 0 (repeatable
+   answers), reply in JSON only, and "automatic function calling" switched
+   off. That last one is a Gemini library feature that lets the AI ask our
+   program to run Python functions for it. We do not give it any, so it is
+   off and the AI just answers the question.
+
+       MAX_MANUAL_CHARS = 8_000
+   Groq's free plan refuses requests that are too big (it replies with error
+   413, meaning "too large"). A whole manual is far too big, so Groq only gets
+   the parts of the manual about the part being checked, cut to at most 8,000
+   characters.
+
+       GROQ_MAX_ANSWER_TOKENS = 2048
+   The most Groq is allowed to write back.
+
+       PART_SEARCH_WORDS
+   The words each of our six parts goes by in the manuals. Some of our
+   manuals are US-style and say "tire" instead of "tyre", or "air cleaner"
+   instead of "air filter". For example, Coolant is searched for as
+   "coolant" and "cooling system". These words are put into the prompt and
+   also used to find the right lines of the manual for Groq.
+
+       REQUIRED_KEYS
+   The five labels every valid AI answer must have: urgency_score,
+   confidence, overdue_summary, recommended_action, manual_reference.
+
+       VALID_CONFIDENCE
+   The only confidence words accepted: High, Medium, Low.
+
+       FALLBACK_ASSESSMENT
+   The "AI unavailable" answer used when no AI gives a valid reply. It has
+   no urgency score, confidence "Unknown", the summary "AI assessment
+   unavailable.", provider "none" and ai_status "unavailable". When
+   logic_manager sees an ai_status that is not "ok", it sets the outcome to
+   "NEEDS MANUAL REVIEW - AI assessment unavailable".
+
+3. get_clients()
+
+   What it does: reads the .env file and sets up a connection (client) to
+   Gemini and one to Groq.
+   What it needs: nothing; it finds the keys itself.
+   What it gives back: two things, the Gemini client and the Groq client.
+   If a key is missing, that client is None ("nothing"), and the app relies
+   on the other one. A missing Gemini key is written to the log as an error,
+   with a hint to copy .env.example to .env. A missing Groq key is not
+   logged, because Groq is only the backup.
+
+4. build_prompt(record)
+
+   What it does: writes the question for the AI.
+   What it needs: the record for one check (car model, condition, COE expiry,
+   part name, stored interval, last service date and odometer, today's date
+   and odometer).
+   What it gives back: the full question as one long piece of text.
+
+   The question tells the AI to act as a maintenance advisor in Singapore,
+   to use the attached manual as its main source, and to follow four steps:
+
+   1. find the manual's interval for this part, including any "severe
+      driving conditions" schedule (Singapore's heat and stop-and-go traffic
+      usually count as severe),
+   2. compare both the distance and the time since the last service with
+      that interval,
+   3. give an urgency score using a fixed scale (1-3 well within the
+      interval, 4-5 approaching it, 6-7 at or just past it for a part that is
+      not safety-critical, 8-9 clearly overdue or a safety-critical part such
+      as brake pads or tyres at or past its interval, 10 safety-critical and
+      far overdue); for a used car it should lean one point higher when
+      unsure, because the earlier history is unknown,
+   4. set confidence: High if the manual gives an interval for this exact
+      part, Medium if it only covers it indirectly or disagrees with our
+      stored schedule, Low if the manual does not cover it at all.
+
+   For Tyres, it explains that the interval means the tyre rotation interval.
+   Finally it asks for ONLY one JSON object with exactly the five labels. The
+   fixed scale matters because logic_manager's rules use the score (for
+   example, 8 or more counts as high urgency).
+
+5. call_gemini(prompt, manual_path, client)
+
+   What it does: sends the question to Gemini. If we have the manual's PDF,
+   it first uploads the PDF and attaches it, so Gemini can read the whole
+   manual for this car itself.
+   What it needs: the question, where the PDF is, and the Gemini client.
+   What it gives back: Gemini's reply text, or None if anything went wrong.
+   Any problem (no internet, wrong key, Gemini too busy, too many requests,
+   too slow) is written to the log and turned into None, so the backup can
+   be tried.
+
+6. manual_text(manual_path)
+
+   What it does: reads all the text out of the manual PDF, page by page.
+   This is needed for Groq, which cannot open PDF files.
+   What it needs: where the PDF is.
+   What it gives back: all the text joined together, or empty text if the
+   PDF could not be read. If the PDF has no text at all (for example, it is
+   only scanned pictures of pages), a warning is logged.
+
+7. manual_excerpt(text, part_name)
+
+   What it does: keeps only the lines of the manual that mention the part,
+   plus the line just before and just after each one (maintenance tables
+   often spread one entry over two lines).
+   What it needs: the manual's full text and the part name.
+   What it gives back: the kept lines as one piece of text, at most 8,000
+   characters. If no line mentions the part, it uses the manual's text from
+   the start instead. If the text is too long, it is cut and a warning is
+   logged.
+
+   Example: for "Engine Air Filter" it searches for "air cleaner" and "air
+   filter". For a part name not in PART_SEARCH_WORDS, such as "Timing Belt",
+   it searches for the words of the name itself: "timing" and "belt"
+   (lower case, a final "s" removed, words of two letters or fewer skipped).
+
+8. call_groq(prompt, manual_path, client, part_name)
+
+   What it does: sends the question to Groq, the backup AI. In front of the
+   question it puts the relevant manual text from manual_excerpt(), under the
+   heading "OWNER'S MANUAL (the sections about this part, extracted from the
+   PDF)". If the manual could not be read, it says so instead. It uses
+   temperature 0, limits the answer length, and sets reasoning effort to
+   "low" to stay within the free plan's limits.
+   What it gives back: Groq's reply text, or None if anything went wrong
+   (the error is logged).
+
+9. ask_ai(prompt, manual_path, gemini, groq, part_name)
+
+   What it does: tries Gemini first. If Gemini gives no reply (or there is
+   no Gemini client) and a Groq client exists, it logs the warning
+   "Gemini unavailable -- trying the Groq backup." and tries Groq.
+   What it gives back: two things, the reply text (or None) and the name of
+   who answered: "Gemini", "Groq (backup)" or "none".
+
+10. call_api(prompt, manual_path, client, backup_client)
+
+   What it does: the "call_api" step our project brief asks for. It sets up
+   the clients if none were given, calls ask_ai(), and gives back just the
+   reply text (or None).
+   Note: main.py does not use call_api(). process() calls ask_ai() directly,
+   because it also wants to know which AI answered. Also, call_api() does
+   not pass a part name on, so if it ever fell back to Groq, Groq would get
+   the start of the manual rather than the lines about one part. The client
+   and backup_client inputs are only filled in by our automatic tests, which
+   use pretend AIs.
+
+11. parse_response(reply)
+
+   What it does: finds the JSON inside the AI's reply and turns it into a
+   Python dictionary. It takes everything from the first { to the last }, so
+   extra words such as "Here is my answer:" or code-fence marks around the
+   JSON are ignored.
+   What it gives back: the dictionary, or None if there is no reply, no
+   { and }, the text between them is not valid JSON, or it is valid JSON but
+   not a labelled object.
+
+   Example reply from the AI for Engine Oil:
+
+       {
+         "urgency_score": 7,
+         "confidence": "High",
+         "overdue_summary": "Engine oil: 650 km overdue",
+         "recommended_action": "Change the engine oil and filter this week.",
+         "manual_reference": "Scheduled maintenance, p. 7"
+       }
+
+12. validate_response(data)
+
+   What it does: checks the answer before anything uses it.
+   1. All five required labels must be there.
+   2. urgency_score must be a whole number from 1 to 10. 7.0 is accepted
+      and tidied to 7. 0, 11, 7.5, "high", true and false are all refused.
+   3. confidence must be exactly "High", "Medium" or "Low" ("high" or
+      "Very High" are refused).
+   4. overdue_summary, recommended_action and manual_reference must be real
+      text, not empty or blank.
+   What it gives back: a clean copy with only the five labels plus
+   ai_status "ok" (any extra labels the AI added are dropped), or None if any
+   check fails. Each failure is logged with the reason.
+
+13. process(record, manual_path, client, backup_client, max_attempts)
+
+   What it does: runs the whole job for one check. This is the function
+   main.py calls.
+   1. Sets up the clients (unless tests gave pretend ones).
+   2. Builds the question once with build_prompt().
+   3. Up to max_attempts times (2 by default): asks the AI with ask_ai(),
+      then reads and checks the reply with parse_response() and
+      validate_response().
+   4. On a good answer: adds ai_provider (who answered), copies the record,
+      adds the answer to the copy and gives it back.
+   5. On a bad or missing answer: logs "No valid AI response (attempt 1 of
+      2)." If neither AI replied at all, it waits 3 seconds before the next
+      try. If an AI did reply but the answer was faulty, it tries again
+      straight away. It never waits after the last attempt.
+   6. If every attempt fails: gives back a copy of the record with the
+      FALLBACK_ASSESSMENT values added.
+   What it gives back: always a copy of the record with an answer attached.
+   The original record is left untouched.
+
+
+THE BACKUP PLAN
+
+Here is what happens in each situation, and what the user sees.
+
+1. Gemini answers properly.
+   The answer is used. The result screen shows "Answered by: Gemini".
+
+2. Gemini fails, Groq answers properly.
+   Gemini's error is logged, for example "[ERROR] ai_manager: Gemini call
+   failed: ...", followed by "[WARNING] ai_manager: Gemini unavailable --
+   trying the Groq backup." Groq gets the question plus the manual lines
+   about the part. The result screen shows "Answered by: Groq (backup)".
+   If there is no Gemini key at all, the "GEMINI_API_KEY is not set" error
+   appears instead, and Groq is asked straight away.
+
+3. Neither AI replies (first attempt).
+   The errors are logged, then "No valid AI response (attempt 1 of 2)."
+   The app waits 3 seconds (RETRY_DELAY_SECONDS), because "too busy" errors
+   often clear quickly, then repeats steps 1 and 2.
+
+4. An AI replies, but the answer is faulty.
+   The reason is logged (for example "invalid urgency_score"). The app tries
+   again straight away, without waiting.
+
+5. Every attempt fails.
+   The app does not crash. The FALLBACK_ASSESSMENT values are used, and
+   logic_manager gives the outcome "NEEDS MANUAL REVIEW - AI assessment
+   unavailable". The result screen shows "AI urgency: n/a (confidence:
+   Unknown)", "Answered by: none", and the advice "Could not get an AI
+   recommendation -- check this part manually."
+
+
+A WORKED EXAMPLE
+
+A user with a used Mazda 3 Hatchback 2020 checks Engine Oil. The stored
+schedule says every 10,000 km or 12 months. The oil was last changed on
+2025-11-02 at 40,000 km, and today (2026-10-12) the odometer reads 50,650 km.
+
+1. main.py calls process() with a record holding those details, and the
+   location of the Mazda's manual PDF.
+2. process() calls get_clients(), which finds both keys and sets up the
+   Gemini and Groq clients.
+3. build_prompt() writes the question. Among other things it says the part
+   is Engine Oil, that the manual may call it "engine oil, oil filter, oil
+   and filter", the stored schedule, the last service and today's reading.
+4. Attempt 1: ask_ai() calls call_gemini(), which uploads the PDF and sends
+   it with the question. Gemini replies with JSON like the Engine Oil
+   example above: urgency 7, confidence High, "Engine oil: 650 km overdue".
+5. parse_response() turns the reply into a dictionary.
+6. validate_response() checks it: all five labels present, 7 is a whole
+   number from 1 to 10, "High" is allowed, and the three texts are not
+   empty. It gives back a clean copy with ai_status "ok".
+7. process() adds ai_provider "Gemini", copies the record, adds the answer
+   and gives it back to main.py.
+8. logic_manager then decides the outcome. With urgency 7 and the oil 650
+   km past its interval (and a COE that has not expired), a result such as
+   "DUE SOON - Overdue by manufacturer schedule" would be expected. That
+   decision is made in logic_manager.py, not here.
+
+
+PYTHON IDEAS USED IN THIS FILE
+
+import
+    Loads ready-made tools so the file can use them. Like borrowing a tool
+    from a toolbox instead of building it yourself.
+
+Constants (names in CAPITALS)
+    Settings written once at the top and never changed while the app runs.
+    Like the fixed rules printed on the back of a board game box.
+
+Dictionary
+    A set of labelled values, written {"label": value}. Like a paper form
+    with named boxes; the record and the AI's answer are both dictionaries.
+
+List, tuple and set
+    A list is items in order, in [ ]. A tuple, in ( ), is a list that can't
+    be changed afterwards. A set stores each item only once. Like a shopping
+    list, a printed menu, and a guest list where no name appears twice.
+
+Function (def ... return)
+    A named set of steps that takes some inputs and gives back a result with
+    return. Like a recipe: ingredients in, dish out.
+
+Giving back two things at once
+    A function can return two values together, such as (reply, who
+    answered). Like a waiter bringing your meal and the bill on one tray.
+
+Default values
+    Inputs written like max_attempts=2 are used if the caller gives nothing.
+    Like a coffee order that comes with milk unless you say otherwise.
+
+None
+    Python's word for "nothing here". This file uses it to mean "no reply"
+    or "no valid answer". Like an empty envelope.
+
+if / else
+    Do something only when a condition is true. Like "if it rains, take an
+    umbrella".
+
+for loop and range()
+    Repeat steps once for each item, or for each number in a range. Like
+    checking every page of a book one after another.
+
+try / except
+    Try some steps; if an error happens, jump to the except part instead of
+    crashing. Like a safety net under a trapeze act.
+
+with
+    Opens something (here, a PDF file) and closes it again automatically
+    when finished. Like a library book that returns itself.
+
+f-strings
+    Text starting with f in which anything inside { } is replaced by a real
+    value, so f"Part: {name}" might become "Part: Engine Oil". Like a form
+    letter with blanks filled in.
+
+Text tools
+    Small built-in helpers such as .lower() (make lower case), .strip()
+    (remove blank space at the ends), .find() (where does this appear?) and
+    text[:8000] (the first 8,000 characters). Like the find and trim tools in
+    a word processor.
+
+isinstance()
+    Asks "is this value of this kind?", for example "is this a dictionary?"
+    or "is this a whole number?". Like checking a parcel is a box before
+    trying to open its lid.
+
+Type hints
+    Notes such as prompt: str after an input name say what kind of value is
+    expected (here, text). Python does not enforce them; they are labels for
+    the reader, like "fragile" written on a box.
+
+
+PROJECT RULES THIS FILE FOLLOWS
+
+C2: every check goes through the AI
+    main.py sends every check through process(). The urgency score that
+    logic_manager depends on only comes from here, which is why the brief
+    calls the AI the core engine.
+
+C3: structured JSON, checked before use
+    The prompt and Gemini's settings ask for a JSON-only reply with fixed
+    labels, and validate_response() checks every label and value before
+    anything else uses the answer. Faulty answers are rejected and retried.
+
+C4: same input, same output
+    Both Gemini and Groq are called with temperature 0, and the urgency
+    scale is fixed in the prompt, so repeated checks should give the same
+    answer.
+
+Log and continue, never crash
+    Every call to an AI and every PDF read is wrapped in try / except.
+    Errors go to the log, and if no AI can answer, the fallback values let
+    the app carry on and mark the check "NEEDS MANUAL REVIEW".
+
+No print() outside io_manager
+    This file only writes to the log; all screens are printed by
+    io_manager.py.
+
+No business rules here
+    This file only gets and checks the AI's answer. Deciding outcomes such
+    as URGENT, DUE SOON or DEFER happens in logic_manager.py.
+
+The four AI functions from the brief (section 2.2)
+    build_prompt(), call_api(), parse_response() and validate_response() are
+    all here, and process() runs the steps in order.

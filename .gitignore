@@ -1,1 +1,16 @@
+# Secrets: never upload API keys to GitHub
 .env
+
+# Python's automatic files and your virtual environment
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Created by the app while it runs (cars.json IS committed)
+data/users.json
+data/maintenance_records.json
+
+# macOS
+.DS_Store

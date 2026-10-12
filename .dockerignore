@@ -1,0 +1,14 @@
+# Files Docker must NOT copy into the image.
+# .env holds your secret API keys -- pass them in with --env-file instead.
+.env
+.git
+.github
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+# Saved data stays on your computer; share it with the container using -v (see README).
+data/users.json
+data/maintenance_records.json

@@ -23,15 +23,15 @@ USER = {
 @contextlib.contextmanager
 def temp_data_files():
     """Point data_manager at empty temp files for the duration of a test."""
-    saved = (data_manager.DATA_FILE, data_manager.USERS_FILE, data_manager.SCHEDULE_FILE)
+    saved = (data_manager.DATA_FILE, data_manager.USERS_FILE, data_manager.CARS_FILE)
     folder = tempfile.mkdtemp()
     data_manager.DATA_FILE = os.path.join(folder, "maintenance_records.json")
     data_manager.USERS_FILE = os.path.join(folder, "users.json")
-    data_manager.SCHEDULE_FILE = os.path.join(folder, "service_schedule.json")
+    data_manager.CARS_FILE = os.path.join(folder, "cars.json")
     try:
         yield folder
     finally:
-        data_manager.DATA_FILE, data_manager.USERS_FILE, data_manager.SCHEDULE_FILE = saved
+        data_manager.DATA_FILE, data_manager.USERS_FILE, data_manager.CARS_FILE = saved
         shutil.rmtree(folder, ignore_errors=True)
 
 
@@ -89,7 +89,7 @@ def test_delete_user():
 def test_save_load_and_query_records():
     with temp_data_files():
         data_manager.save({"license_plate": "SBA1234A", "part_name": "Engine Oil", "current_odometer": 40_000})
-        data_manager.save({"license_plate": "SGX88B", "part_name": "Tyres", "current_odometer": 9_000})
+        data_manager.save({"license_plate": "SGX88B", "part_name": "Battery", "current_odometer": 9_000})
         assert len(data_manager.load()) == 2
         mine = data_manager.query(lambda r: r["license_plate"] == "SBA1234A")
         assert [r["part_name"] for r in mine] == ["Engine Oil"]
@@ -106,8 +106,8 @@ def test_persists_across_separate_loads():
 def test_last_odometer_is_per_car_across_all_parts():
     with temp_data_files():
         data_manager.save({"license_plate": "SBA1234A", "part_name": "Engine Oil", "current_odometer": 40_000})
-        data_manager.save({"license_plate": "SBA1234A", "part_name": "Tyres", "current_odometer": 42_500})
-        data_manager.save({"license_plate": "SGX88B", "part_name": "Tyres", "current_odometer": 90_000})
+        data_manager.save({"license_plate": "SBA1234A", "part_name": "Battery", "current_odometer": 42_500})
+        data_manager.save({"license_plate": "SGX88B", "part_name": "Battery", "current_odometer": 90_000})
         records = data_manager.load()
         assert data_manager.get_last_odometer(records, "SBA1234A") == 42_500
         assert data_manager.get_last_odometer(records, "NEW1A") is None
@@ -122,44 +122,107 @@ def test_delete_records_for_plate():
         assert data_manager.load() == [{"license_plate": "SGX88B"}]
 
 
-# --- Stored manufacturer schedule (business rule 2) ---------------------------------
+# --- Car catalogue (the 4 supported cars) ---------------------------------------
 
-SCHEDULE = {
-    "default": {"Engine Oil": {"km": 10000, "months": 6}, "Spark Plugs": {"km": 30000, "months": 24}},
-    "models": {"toyota corolla": {"Spark Plugs": {"km": 100000, "months": 72}}},
-}
+CATALOGUE = {"cars": [
+    {"model": "Honda Civic 2025", "condition": "Brand New", "manual": "manuals/honda.pdf",
+     "schedule": {"Engine Oil": {"km": 10000, "months": 12}, "Brake Pads": {"km": 40000, "months": 24}}},
+    {"model": "Kia Forte", "condition": "Used", "manual": "manuals/kia.pdf",
+     "schedule": {"Engine Oil": {"km": 8000, "months": 6}}},
+]}
 
 
-def test_interval_uses_model_override_when_model_matches():
+def test_lists_models_and_finds_condition():
     with temp_data_files():
-        write(data_manager.SCHEDULE_FILE, json.dumps(SCHEDULE))
-        assert data_manager.get_service_interval("Toyota Corolla Altis 2021", "Spark Plugs") == \
-            {"interval_km": 100000, "interval_months": 72}
-        assert data_manager.get_service_interval("Honda Jazz", "Spark Plugs") == \
-            {"interval_km": 30000, "interval_months": 24}
+        write(data_manager.CARS_FILE, json.dumps(CATALOGUE))
+        assert data_manager.list_car_models() == ["Honda Civic 2025", "Kia Forte"]
+        assert data_manager.find_car("Kia Forte")["condition"] == "Used"
+        assert data_manager.find_car("Toyota Corolla") is None
 
 
-def test_unknown_part_has_no_interval():
+def test_each_car_has_its_own_parts_and_intervals():
     with temp_data_files():
-        write(data_manager.SCHEDULE_FILE, json.dumps(SCHEDULE))
-        assert data_manager.get_service_interval("Honda Jazz", "Flux Capacitor") is None
-        assert data_manager.list_parts("Honda Jazz") == ["Engine Oil", "Spark Plugs"]
+        write(data_manager.CARS_FILE, json.dumps(CATALOGUE))
+        assert data_manager.list_parts("Honda Civic 2025") == ["Brake Pads", "Engine Oil"]
+        assert data_manager.list_parts("Kia Forte") == ["Engine Oil"]
+        assert data_manager.get_service_interval("Kia Forte", "Engine Oil") == \
+            {"interval_km": 8000, "interval_months": 6}
+        assert data_manager.get_service_interval("Kia Forte", "Brake Pads") is None
 
 
-def test_missing_or_corrupt_schedule_falls_back_to_built_in():
+def test_missing_or_corrupt_catalogue_returns_empty():
     with temp_data_files():
-        assert "Engine Oil" in data_manager.list_parts("Any Car")  # missing file
-        write(data_manager.SCHEDULE_FILE, "garbage")
-        assert "Engine Oil" in data_manager.list_parts("Any Car")  # corrupt file
+        assert data_manager.list_car_models() == []       # missing
+        write(data_manager.CARS_FILE, "garbage")
+        assert data_manager.list_car_models() == []       # corrupt
+        assert data_manager.list_parts("Kia Forte") == []
 
 
-def test_invalid_schedule_entries_are_skipped():
+def test_invalid_entries_are_skipped():
     with temp_data_files():
-        bad = {"default": {"Engine Oil": {"km": 10000, "months": 6}, "Tyres": {"km": "lots"}}, "models": {}}
-        write(data_manager.SCHEDULE_FILE, json.dumps(bad))
-        assert data_manager.list_parts("Any Car") == ["Engine Oil"]
+        bad = {"cars": [
+            {"model": "Kia Forte", "condition": "Old", "manual": "x.pdf", "schedule": {}},  # bad condition
+            {"model": "Honda Civic 2025", "condition": "Brand New", "manual": "h.pdf",
+             "schedule": {"Engine Oil": {"km": 10000, "months": 12}, "Tyres": {"km": "lots"}}},
+        ]}
+        write(data_manager.CARS_FILE, json.dumps(bad))
+        assert data_manager.list_car_models() == ["Honda Civic 2025"]
+        assert data_manager.list_parts("Honda Civic 2025") == ["Engine Oil"]
 
 
-def test_real_schedule_file_is_valid():
-    # Guards the committed data/service_schedule.json against typos.
-    assert len(data_manager.list_parts("Toyota Corolla 2020")) >= 5
+def test_manual_path_only_when_file_exists():
+    with temp_data_files():
+        write(data_manager.CARS_FILE, json.dumps(CATALOGUE))
+        assert data_manager.get_manual_path("Kia Forte") is None  # PDF not there
+        saved = data_manager.PROJECT_DIR
+        data_manager.PROJECT_DIR = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(data_manager.PROJECT_DIR, "manuals"))
+            write(os.path.join(data_manager.PROJECT_DIR, "manuals", "kia.pdf"), "%PDF-1.4")
+            assert data_manager.get_manual_path("Kia Forte").endswith("manuals/kia.pdf")
+        finally:
+            shutil.rmtree(data_manager.PROJECT_DIR, ignore_errors=True)
+            data_manager.PROJECT_DIR = saved
+
+
+def test_real_catalogue_file_is_valid():
+    # Guards the committed data/cars.json against typos.
+    assert data_manager.list_car_models() == [
+        "Honda Civic 2025", "Mazda 3 Hatchback 2020", "Hyundai Elantra 2021", "Kia Forte"]
+    for model in data_manager.list_car_models():
+        assert len(data_manager.list_parts(model)) >= 1, model
+
+
+def test_last_odometer_skips_damaged_entries():
+    records = [{"license_plate": "SBA1234A", "current_odometer": 40_000},
+               {"license_plate": "SBA1234A", "current_odometer": "52000"},  # text
+               {"license_plate": "SBA1234A"}]                               # missing
+    assert data_manager.get_last_odometer(records, "SBA1234A") == 40_000
+
+
+# --- Repeated checks are detected (no second AI call) -------------------------------
+
+CHECK = {"license_plate": "SBA1234A", "part_name": "Engine Oil", "last_service_date": "2025-09-03",
+         "last_service_mileage": 40_000, "current_odometer": 49_000}
+
+
+def test_identical_check_is_found_as_repeat():
+    with temp_data_files():
+        data_manager.save({**CHECK, "check_date": "2026-10-01", "urgency_score": 3})
+        previous = data_manager.find_repeat({**CHECK, "check_date": "2026-10-09"})
+        assert previous is not None
+        assert previous["urgency_score"] == 3
+
+
+def test_any_changed_input_is_not_a_repeat():
+    with temp_data_files():
+        data_manager.save(CHECK)
+        for field, new_value in [("current_odometer", 49_500), ("part_name", "Battery"),
+                                 ("last_service_date", "2025-09-04"), ("license_plate", "SGX88B"),
+                                 ("last_service_mileage", 40_001)]:
+            assert data_manager.find_repeat({**CHECK, field: new_value}) is None, field
+
+
+def test_no_history_means_no_repeat():
+    with temp_data_files():
+        assert data_manager.find_repeat(CHECK) is None

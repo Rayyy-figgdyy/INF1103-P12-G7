@@ -1,0 +1,594 @@
+IO_MANAGER.PY EXPLAINED
+A plain-language guide for teammates who don't code much
+
+This guide walks through io_manager.py, the part of our Car Maintenance &
+Service Risk Tracker that talks to the user. You do not need to know Python to
+follow it. Code names are shown indented by 4 spaces, like this:
+
+    prompt_km
+
+All examples use real values from our app: the plate SBA1234A, a Honda Civic
+2025, Engine Oil serviced every 10,000 km or 12 months, and "today" being
+12 October 2026.
+
+
+WHAT THIS FILE IS FOR
+
+io_manager.py is the screen and keyboard of the app. Everything the user sees
+on screen and everything the user types passes through this file, and nowhere
+else. It shows the menus, asks the questions, checks the answers, and shows the
+results.
+
+Think of it as the receptionist at a car workshop. The receptionist greets you,
+hands you the forms, checks you filled them in properly ("this date is in the
+future, please fix it"), and later reads the mechanic's report back to you.
+The receptionist never fixes the car, never files the paperwork in the back
+room, and never decides what repair you need. Those jobs belong to other files.
+
+The most important habit of this file is "reject and re-prompt": if the user
+types something wrong, it explains what is wrong and asks the same question
+again. The app never crashes because of a typing mistake.
+
+
+WHERE IT FITS
+
+Our app has four "manager" files plus main.py, which wires them together:
+
+    io_manager    ->  ai_manager  ->  logic_manager  ->  data_manager
+    (screen and       (asks the       (business         (saves and loads
+     keyboard)         AI)             rules)            the files)
+
+main.py is the conductor. It calls io_manager to get answers from the user,
+passes those answers on to the AI and the business rules, saves the result with
+data_manager, and finally hands the finished record back to io_manager to show
+on screen.
+
+What io_manager RECEIVES from main.py:
+
+1. Lists to choose from, e.g. the 4 car models or the 6 parts (main.py reads
+   them from cars.json).
+2. Saved facts it is not allowed to look up itself, e.g. the set of plates
+   already registered, or this car's highest odometer reading on file.
+3. Finished records to display, e.g. a maintenance check with the AI's
+   urgency score and the final outcome already filled in.
+4. One-line messages to print, e.g. "Goodbye!" (main.py is not allowed to
+   print, so it asks io_manager to do it).
+
+What io_manager HANDS BACK to main.py:
+
+1. Clean, already-checked answers, e.g. the plate "SBA1234A", the number 70800,
+   or the date "2026-03-15".
+2. Nothing at all for the display functions: they only print.
+
+io_manager never saves files, never talks to the AI, and never makes business
+decisions such as "is this part urgent?".
+
+
+WALKTHROUGH
+
+The file is in seven parts, and this walkthrough follows the same order:
+
+1. Fixed settings (menus, the plate pattern, the date format)
+2. Small helpers that convert or tidy values
+3. Questions that keep asking until the answer is valid
+4. The main menu
+5. Account screens (login, register, update, show profile)
+6. Maintenance check questions
+7. Screens that show results
+
+
+Part 1: Fixed settings
+
+These are values written once at the top and never changed while the app runs.
+Their names are in CAPITALS to show that.
+
+    MENU_LOGGED_OUT
+The menu shown when nobody is logged in: 1) Login, 2) Register new profile,
+3) Exit.
+
+    MENU_LOGGED_IN
+The menu shown when someone is logged in, with options 1 to 8 (check a part,
+history, urgent items, view/update/delete profile, logout, exit). Its top line
+has three gaps, {name}, {plate} and {car_model}, which are filled in later, so
+it reads for example "Logged in: Darren", then "SBA1234A", then
+"Honda Civic 2025", separated by vertical bars.
+
+    LICENSE_PLATE_PATTERN
+The shape a Singapore plate must have: 1 to 3 capital letters, then 1 to 4
+digits, then 1 capital letter, and nothing else. SBA1234A fits. SBA1234 (no
+final letter) does not.
+
+    MAX_ODOMETER_KM
+Set to 2,000,000. Any odometer reading above this is treated as a typing
+mistake.
+
+    DATE_FORMAT and DATE_HINT
+Users type and see dates as DD/MM/YYYY, e.g. 12/10/2026. Behind the scenes
+the app SAVES dates as YYYY-MM-DD, e.g. 2026-10-12, because that style sorts
+correctly and is easy to calculate with. DATE_HINT is the text "DD/MM/YYYY"
+shown to the user in questions.
+
+
+Part 2: Small helpers
+
+    parse_date(typed)
+What it does: turns a date the user typed into a real date the computer
+understands. Dashes are accepted as well as slashes.
+Needs: the typed text.
+Gives back: a real date, or "None" (meaning "nothing") if it is not a real
+date.
+Example: "12/10/2026" and "12-10-2026" both become 12 October 2026.
+"31/02/2025" gives None, because February has no 31st. "hello" also gives None.
+
+    show_date(saved_date)
+What it does: the opposite of parse_date, for the screen. It turns a saved
+YYYY-MM-DD date into DD/MM/YYYY.
+Needs: a saved date (or nothing).
+Gives back: text for the screen.
+Example: "2026-10-12" is shown as "12/10/2026". If there is no date at all it
+shows "-". If the saved value is damaged, e.g. "2026-13-45", it shows that
+value unchanged instead of crashing.
+
+    km(value)
+What it does: makes a distance easy to read by adding thousands commas.
+Needs: a number of km. It also copes with a number saved as text.
+Gives back: text for the screen.
+Example: 70800 becomes "70,800". A decimal like 49000.4 is rounded to
+"49,000". The text "52000" becomes "52,000". A missing value shows "-". Junk
+like "abc" is shown as "abc" rather than crashing the history screen.
+
+    normalise_plate(typed)
+What it does: tidies up a typed plate so small differences don't matter. It
+removes spaces and dashes and makes every letter a capital.
+Needs: the plate exactly as typed.
+Gives back: the tidy plate.
+Example: "sba 1234-a" becomes "SBA1234A".
+
+
+Part 3: Questions that keep asking until the answer is valid
+
+Each of these asks a question, checks the answer, and if the answer is wrong
+prints a message starting with "->" and asks again. It only finishes once the
+answer is acceptable.
+
+    prompt_text(label)
+What it does: asks for any text that is not empty.
+Needs: the question label, e.g. "Name".
+Gives back: the answer with spaces trimmed from both ends.
+Example: pressing Enter without typing shows
+
+    -> Name cannot be empty. Please try again.
+
+and asks again. Typing "  Darren " gives back "Darren".
+
+    prompt_km(label)
+What it does: asks for a whole number of kilometres. Commas are allowed.
+Needs: the question label, e.g. "Odometer at last service (km)".
+Gives back: the whole number.
+Example: "60,000" gives back 60000. Answers with letters, a minus sign, a
+decimal point, or nothing at all are refused with "must be a whole number of
+km, e.g. 45200". A number above 2,000,000 is refused with "looks too large
+(max 2,000,000 km)".
+
+    prompt_past_date(label)
+What it does: asks for a real date that is today or earlier. Used for the date
+of the last service, which cannot be in the future.
+Needs: the question label, e.g. "Date of last service".
+Gives back: the date in the saved style, YYYY-MM-DD.
+Example: on 12/10/2026, typing "15/03/2026" gives back "2026-03-15". Typing
+"20/12/2026" is refused with "cannot be in the future". Typing "31/02/2026"
+is refused with "must be a real date in DD/MM/YYYY format".
+
+    prompt_number_choice(label, options)
+What it does: prints the options as a numbered list starting at 1, then asks
+for a number.
+Needs: the question label and the list of options.
+Gives back: the option the user picked (the words, not the number).
+Example: with our 6 parts (main.py hands them over in A to Z order) the
+screen shows
+
+     1) Brake Pads
+     2) Coolant
+     3) Engine Air Filter
+     4) Engine Oil
+     5) Spark Plugs
+     6) Tyres
+
+Typing 9 is refused with "Please enter a number from 1 to 6." Typing 4 gives
+back "Engine Oil".
+
+    confirm_action(question)
+What it does: asks a yes/no question.
+Needs: the question, e.g. "Permanently delete SBA1234A and its 3 maintenance
+record(s)?" (main.py writes this question).
+Gives back: True for yes, False for no.
+Example: "y", "Y", "yes" or "YES" all mean yes. "n" or "no" mean no. Anything
+else gets "Please answer y or n." and the question is asked again.
+
+    wait_for_enter()
+What it does: shows "Press Enter to go back to the menu..." and waits.
+Needs: nothing.
+Gives back: nothing.
+Why: without this pause the menu would be printed straight after the results
+and push them off the top of a small terminal window.
+
+
+Part 4: The main menu
+
+    prompt_main_menu(current_user)
+What it does: shows the logged-out menu if nobody is logged in, otherwise the
+logged-in menu with the user's name, plate and car filled in. Then it reads the
+user's choice.
+Needs: the logged-in user's profile, or None if nobody is logged in.
+Gives back: exactly what the user typed (spaces trimmed), e.g. "1".
+Note: this function does not check the choice. main.py does that and shows
+"Invalid choice. Please enter a number from the menu." if needed.
+
+
+Part 5: Account screens
+
+    prompt_login()
+What it does: shows "--- Login ---" and asks for a license plate. Empty
+answers are refused.
+Needs: nothing.
+Gives back: the tidied plate.
+Example: typing "sba1234a" gives back "SBA1234A". main.py then checks whether
+that plate is registered.
+
+    prompt_identity(taken_plates)
+What it does: the first part of registering. Asks for a name, then a plate.
+The plate must fit the Singapore pattern and must not already be registered.
+Needs: the set of plates already registered (main.py looks this up, because
+this file is not allowed to read the saved files).
+Gives back: the name and plate together, e.g. name "Darren" and plate
+"SBA1234A".
+Example: "SBA1234" is refused because it does not look like SBA1234A. If
+SBA1234A is already taken, the user sees "SBA1234A is already registered.
+Please try again."
+
+    prompt_car_choice(car_models)
+What it does: asks "Which car do you drive?" and shows the supported cars as a
+numbered list (using prompt_number_choice).
+Needs: the list of car models from cars.json.
+Gives back: the chosen model, e.g. "Honda Civic 2025".
+
+    prompt_coe_expiry()
+What it does: asks for the COE (Certificate of Entitlement) expiry date.
+Needs: nothing.
+Gives back: the date in the saved style, e.g. typing 31/05/2030 gives
+"2030-05-31".
+Note: unlike a service date, a date in the PAST is allowed here. An expired
+COE is real information, and our business rules react to it.
+
+    prompt_updated_profile(current)
+What it does: lets the user change their name and COE expiry date. The current
+value is shown in square brackets, and pressing Enter keeps it. The plate and
+car are shown with "(cannot be changed)", because they identify the account.
+Needs: the user's current profile.
+Gives back: an updated COPY of the profile (main.py saves it).
+Example: the screen shows
+
+    Name [Darren]:
+    COE expiry date (DD/MM/YYYY) [31/05/2030]:
+
+Pressing Enter on both keeps everything. A badly typed COE date gets "Use
+DD/MM/YYYY, or press Enter to keep." and is asked again.
+
+    display_user(user)
+What it does: prints the profile: name, plate, car model, car condition (e.g.
+"Brand New" or "Used") and COE expiry date (shown as DD/MM/YYYY).
+Needs: the user's profile.
+Gives back: nothing.
+If a detail is missing from the profile, the word None is printed in its place
+(or "-" for a missing COE date) instead of the app crashing.
+
+
+Part 6: Maintenance check questions
+
+    prompt_part_choice(parts)
+What it does: asks "Which part are you checking?" and shows the parts as a
+numbered list. Only parts with a stored service interval in cars.json are
+listed.
+Needs: the list of parts for this car.
+Gives back: the part name, e.g. "Engine Oil".
+
+    prompt_service_details(last_known_odometer)
+What it does: asks for three things. From the last workshop invoice: the date
+of the last service and the odometer at that service. Then today's odometer
+reading. This is where BUSINESS RULE 1 (input validation) lives: a car's
+odometer only goes up, so today's reading is refused if it is lower than
+either the reading at the last service, or the last reading on file for this
+car.
+Needs: the highest odometer reading saved for this car (main.py looks it up
+across all parts), or None if the car has no saved checks yet. If there is a
+reading, it is shown as a reminder before the question.
+Gives back: the three answers together: last service date (YYYY-MM-DD), last
+service odometer, and current odometer.
+Example: see the worked example below.
+
+
+Part 7: Screens that show results
+
+All of these read details with a "safe lookup" (explained in the Python ideas
+section) and pass dates and distances through show_date and km. So if one old
+saved record is missing a detail or has a damaged value, it is still shown
+instead of crashing the whole screen.
+
+    display_message(message)
+What it does: prints one message for main.py, e.g. "Goodbye!" or
+"Welcome back, Darren!".
+
+    display_record(record)
+What it does: prints one maintenance check in full, one detail per line: part,
+car and plate; check date and odometer; last service; the manufacturer's
+schedule; km and days since the last service; the AI's urgency score out of 10
+and its confidence; which AI answered (Gemini, or Groq as backup); the AI's
+summary and manual reference; the OUTCOME; the "service by" date; the risk
+score out of 100; and the advice.
+Two details: the "Overdue by" line is only printed for overdue parts, and if
+the AI could not give an urgency score it shows "n/a" instead of "6/10".
+
+    display_list(records)
+What it does: prints many checks as a neat table, one row each. Used by
+"View my maintenance history" and "View my urgent / overdue items".
+Columns: Checked (date), Part, Odometer, Urgency, Service by, Outcome.
+Part names longer than 19 letters are cut short so the columns stay lined up.
+A missing urgency score is shown as "-". If the list is empty it prints
+"No records to show."
+
+    display_result(record)
+What it does: prints ">>> Assessment saved." and then the full record using
+display_record. Used right after a new check.
+
+    display_repeated(previous)
+What it does: used when the user types exactly the same details as an earlier
+check. main.py spots the repeat; this function prints "This is repeated
+information.", explains that it was not sent to the AI again, and shows the
+earlier saved assessment using display_record.
+
+
+WORKED EXAMPLE
+
+Darren (plate SBA1234A, Honda Civic 2025) is logged in on 12/10/2026. His
+car's highest saved odometer reading is 69,500 km, from an earlier Brake Pads
+check. He chooses 1) Check a part.
+
+Step 1. prompt_part_choice shows the 6 parts. He types 4 and gets
+"Engine Oil".
+
+Step 2. main.py looks up his last reading (69,500) and calls
+prompt_service_details(69500). The screen goes like this (his typing is after
+each colon):
+
+    From your last workshop invoice for this part:
+    Date of last service (DD/MM/YYYY): 15/03/2026
+    Odometer at last service (km): 60,000
+    (Last odometer reading on file for this car: 69,500 km)
+    Current odometer reading (km): 59000
+      -> Can't be lower than the odometer at last service (60,000 km).
+         Please try again.
+    Current odometer reading (km): 69000
+      -> Can't be lower than the last reading on file (69,500 km).
+         Please try again.
+    Current odometer reading (km): 70800
+
+(The two "->" messages are each one long line on the real screen.)
+
+What happened:
+
+1. "15/03/2026" passed the date check, because it is a real date and not in
+   the future. It is stored as "2026-03-15".
+2. "60,000" had its comma removed and became the number 60000.
+3. 59000 was refused: it is below the 60,000 km on the invoice.
+4. 69000 was refused: it is below the 69,500 km already on file.
+5. 70800 passed both checks, so the question stops.
+
+The function hands back: last service date "2026-03-15", last service odometer
+60000, current odometer 70800.
+
+Step 3. main.py adds the Engine Oil schedule (10,000 km or 12 months), sends
+everything to the AI, applies the business rules, and saves the record. None
+of that happens in this file. Suppose the AI replies with urgency 6 and
+"Medium" confidence. The rules work out that 10,800 km have been driven since
+the service, which is 800 km past the 10,000 km limit, so the part is overdue.
+
+Step 4. main.py calls display_result, and the screen shows:
+
+    >>> Assessment saved.
+
+    --- Maintenance check ---
+    Part:               Engine Oil  (Honda Civic 2025, SBA1234A)
+    Checked on:         12/10/2026 at 70,800 km
+    Last serviced:      15/03/2026 at 60,000 km
+    Schedule:           every 10,000 km or 12 months
+    Since last service: 10,800 km / 211 days
+    Overdue by:         800 km / 0 days
+    AI urgency:         6/10 (confidence: Medium)
+    Answered by:        Gemini
+    AI summary:         (the AI's one-line summary)
+    Manual reference:   (where in the manual this comes from)
+    OUTCOME:            DUE SOON - Overdue by manufacturer schedule
+    Service by:         12/10/2026
+    Risk score:         75/100
+    Advice:             (the AI's advice)
+
+Notice that every date is DD/MM/YYYY and every distance has commas, thanks to
+show_date and km. "Overdue by" appears only because the part is overdue.
+
+Step 5. Later he chooses 2) View my maintenance history, and display_list
+shows a table like this:
+
+    Checked     Part                  Odometer  Urgency Service by  Outcome
+    12/10/2026  Engine Oil              70,800  6       12/10/2026  DUE SOON...
+    01/09/2026  Brake Pads              69,500  -       15/09/2026  NEEDS...
+
+(The outcomes are printed in full on the real screen; they are cut short here
+to fit this page. The "-" under Urgency is a check where the AI could not
+answer.)
+
+
+PYTHON IDEAS USED IN THIS FILE
+
+1. import. Borrows ready-made tools that come with Python, like taking a
+   toolbox off the shelf. This file borrows datetime (dates) and re (pattern
+   checking).
+
+2. Constants. Values written in CAPITALS at the top that never change while the
+   app runs, like the opening hours painted on a shop door.
+
+3. Triple-quoted text. Text between three quote marks can span several lines,
+   so the menus are written exactly as they look on screen.
+
+4. Functions (def ... return). A function is a named recipe. The brackets list
+   the ingredients it needs, and "return" hands the finished dish back to
+   whoever asked for it.
+
+5. Type hints. Notes like "-> str" after a function's name tell human readers
+   what goes in and what comes out. A vertical bar between two kinds of
+   value means "either one", so a dictionary, bar, None means "a dictionary,
+   or possibly nothing". Python itself does not enforce these notes.
+
+6. None. Python's word for "nothing here", like an empty box on a form.
+
+7. True and False. The two yes/no values. confirm_action hands back one of
+   them.
+
+8. if / elif / else. "If this, do that; else if this other thing, do that;
+   otherwise do this." Only the first matching branch runs.
+
+9. while True loops, break and return. A loop repeats the same steps.
+   "while True" means "keep going forever", so it only stops when a "return"
+   hands back an answer or a "break" jumps out. This is how every question in
+   this file keeps asking until it gets a valid answer.
+
+10. for loops and enumerate. A for loop repeats once for each item in a list.
+    enumerate(options, start=1) hands out each item with a number, starting
+    at 1, like a ticket machine numbering a queue.
+
+11. Lists and counting from 0. A list is items kept in order, like a numbered
+    shopping list. Python numbers the positions from 0, so menu choice 1 is
+    list position 0. That is why the code subtracts 1. len(list) counts the
+    items.
+
+12. Dictionaries. A dictionary is like a form with labelled boxes, e.g. a box
+    "name" holding "Darren" and a box "license_plate" holding "SBA1234A".
+    user["name"] reads the box labelled "name". dict(current) makes a
+    photocopy of the form, so changes don't touch the original until main.py
+    saves them.
+
+13. Safe lookup with .get(). user.get("name") reads a box like user["name"],
+    but gives back None instead of crashing if the box is missing. Adding a
+    second value, as in record.get("ai_provider", "n/a"), gives a fallback to
+    use instead of None. It is like asking "is there a name on this form?"
+    instead of insisting there must be.
+
+14. Sets and "in". A set is a bag of unique items with no order, very quick to
+    search, like a guest list at the door. "plate in taken_plates" asks "is
+    this plate on the list?". "in" also works on small fixed groups, as in
+    answer in ("y", "yes").
+
+15. try / except. A safety net: "try these steps; if Python complains, do the
+    except part instead of crashing". parse_date and show_date use it to deal
+    with impossible or damaged dates.
+
+16. Text tools. .strip() trims spaces from both ends. .replace(",", "")
+    removes commas. .upper() and .lower() change letters to capitals or small
+    letters. .isdigit() is True only if every character is 0 to 9, so it
+    refuses minus signs, decimal points, letters and empty answers. int(...)
+    turns the text "70800" into the number 70800. str(...) turns a value into
+    text.
+
+17. isinstance. Asks "is this value a certain kind of thing?", e.g. "is this a
+    number?". The km helper uses it, and deliberately excludes True and False,
+    because Python secretly treats them as the numbers 1 and 0.
+
+18. Cutting text with [:19]. Keeps only the first 19 characters, like trimming
+    a long label with scissors so it fits its slot.
+
+19. Regular expressions (re). A way to check that text follows a pattern.
+    re.compile prepares the pattern once, like cutting a stencil, and .match
+    holds a plate against the stencil to see if it fits.
+
+20. Dates. strptime reads typed text using our DD/MM/YYYY stencil. strftime
+    writes a date out in that same style. isoformat writes the saved style
+    YYYY-MM-DD, and fromisoformat reads it back. datetime.date.today() is
+    today's date from the computer's clock. Later dates count as "bigger", so
+    "date > today" means "in the future".
+
+21. input and print. input shows a question and waits for the user to type and
+    press Enter. print shows text on screen. "\n" inside text starts a new
+    line, which is how blank lines appear above headings.
+
+22. f-strings. Text with an f in front, where values are slotted into curly
+    brackets, like a mail-merge letter: f"{label}: " with label "Name" prints
+    "Name: ".
+
+23. .format(...). Another way to fill gaps. The logged-in menu has gaps named
+    {name}, {plate} and {car_model}, and .format fills them with the user's
+    details.
+
+24. Joining text pieces. Two pieces of text written next to each other, with
+    nothing in between, are glued into one. display_list builds each table row
+    this way, one piece per column.
+
+25. Layout codes inside f-strings. These control how a value is laid out, like
+    typing into fixed-width boxes on a paper form:
+
+    :<12    left-align in a box 12 characters wide (dates, part names)
+    :>10    right-align in a box 10 characters wide, so numbers line up on
+            the right like in a bank statement (the Odometer column)
+    :>2     right-align in 2 characters, so " 9)" and "10)" line up
+    :,      add thousands commas: 70800 becomes 70,800
+    :,.0f   add commas and round to a whole number: 49000.4 becomes 49,000
+
+26. Big numbers with underscores. 2_000_000 is just 2000000 written so humans
+    can read it, like writing 2,000,000 on paper.
+
+
+PROJECT RULES THIS FILE FOLLOWS
+
+1. All screen input and output lives here (brief section 2.1). Every print()
+   and input() in the app is in this file. Other files that need to say
+   something, like main.py, call display_message.
+
+2. Clean values only. The questions hand back checked, tidy values: plates in
+   capitals without spaces, distances as whole numbers, dates in the saved
+   YYYY-MM-DD style.
+
+3. Reject and re-prompt. Every question that checks its answer keeps asking
+   until the answer is valid, with a "->" message saying what was wrong. A
+   typing mistake never crashes the app.
+
+4. Business rule 1, input validation. prompt_service_details refuses a current
+   odometer lower than the odometer at the last service, or lower than the last
+   reading on file for this car. prompt_past_date also refuses a last service
+   date in the future, and prompt_km refuses anything that is not a whole
+   number or is above 2,000,000 km.
+
+5. Dates: DD/MM/YYYY for people, YYYY-MM-DD for storage. parse_date and the
+   question functions convert what is typed into the saved style; show_date
+   converts saved dates back for every screen.
+
+6. No file access, no AI, no decisions. When this file needs saved facts (the
+   plates already taken, the last odometer on file) main.py looks them up and
+   passes them in. Outcomes, risk scores and "service by" dates are worked out
+   by logic_manager; this file only displays them. Even the "repeated
+   information" check is decided by main.py; this file just shows the message.
+
+7. Required display functions. The brief asks for display_record, display_list
+   and display_result, and all three are here.
+
+8. Safe display of damaged records. The display functions use safe lookups and
+   the show_date and km helpers, so one missing or damaged saved record cannot
+   crash the history or urgent screens.
+
+9. Account identity is fixed. When updating a profile, only the name and COE
+   expiry date can change. The plate and car identify the account and are
+   shown as "(cannot be changed)".
+
+10. Expired COEs are accepted. prompt_coe_expiry allows past dates on purpose,
+    because the business rules have a special outcome for an expired COE.
+
+11. Looking ahead. In Phase 2 of the project (the object-oriented version),
+    this file is planned to become an IOManager class with InputHandler and
+    OutputHandler sub-classes.

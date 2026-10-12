@@ -139,7 +139,7 @@ def test_route_defer_when_coe_expiring_and_non_critical_and_low_urgency():
 
 
 def test_route_no_defer_for_safety_critical_part_even_if_coe_expiring():
-    record = sample_record(coe_expiry_date="2027-01-15", urgency_score=3, part_name="Brake Fluid")
+    record = sample_record(coe_expiry_date="2027-01-15", urgency_score=3, part_name="Tyres")
     assert not logic_manager.route(record).startswith("DEFER")
 
 
@@ -164,3 +164,5 @@ def test_is_urgent():
     assert logic_manager.is_urgent({"outcome": "URGENT - Service immediately"}) is True
     assert logic_manager.is_urgent({"outcome": "OK - Not urgent"}) is False
     assert logic_manager.is_urgent({}) is False
+    # The AI couldn't assess it, so the owner still needs to act.
+    assert logic_manager.is_urgent({"outcome": "NEEDS MANUAL REVIEW - AI assessment unavailable"}) is True

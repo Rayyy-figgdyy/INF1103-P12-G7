@@ -1,0 +1,597 @@
+LOGIC_MANAGER.PY EXPLAINED
+A plain-English guide for teammates who don't write much code
+
+This guide walks through logic_manager.py, the file that holds our business
+rules. You don't need to know Python to follow it. Every number in the
+examples below was checked by running the real functions from the file.
+
+
+WHAT THIS FILE IS FOR
+
+When a car owner checks a part (for example Engine Oil), the AI reads the
+car's manual and gives an opinion: an urgency score from 1 to 10 and how
+confident it is (High, Medium or Low). That opinion on its own is not the
+final answer. This file takes the AI's opinion, adds the hard facts (how far
+the car has been driven, how many days have passed), and applies OUR rules
+to decide what the owner should do.
+
+It answers three questions for every check:
+
+1. What are the facts? Is the part overdue, how much does the owner drive,
+   when does the COE end, and by what date should the part be serviced?
+   (the function evaluate)
+2. How serious is it, as a number from 0 to 100? This is only used to put
+   the most serious items at the top of the urgent list. (the function score)
+3. What is the final advice? For example "URGENT - Service immediately" or
+   "OK - Not urgent". (the function route)
+
+There is also a small fourth job: deciding whether a saved check belongs in
+the "urgent / overdue items" list (the function is_urgent).
+
+Why is the maths done here and not by the AI? Working out "69,500 minus
+58,000" or "how many days between two dates" is simple arithmetic. An AI can
+get numbers wrong, so we never rely on it for them. The AI gives its
+judgement; this file does the counting.
+
+This file never shows anything on screen, never talks to the AI and never
+reads or writes files. It only takes information in and hands answers back.
+That makes it easy to test on its own.
+
+
+WHERE IT FITS
+
+The app is split into four "managers", and main.py passes each maintenance
+check through them in this order:
+
+    io_manager  ->  ai_manager  ->  logic_manager  ->  data_manager
+    (screen)        (asks AI)       (THIS FILE)        (saves to files)
+
+A "record" is one maintenance check: one part, on one car, on one day. By the
+time the record reaches this file it already contains:
+
+1. What the user typed: last service date, odometer at that service, and
+   the current odometer reading.
+2. The car's details: model and COE expiry date.
+3. The service interval for that part, from our stored schedule
+   (cars.json), for example 10,000 km or 12 months.
+4. The AI's answer: urgency_score, confidence, and ai_status ("ok" if the
+   AI gave a valid answer, "unavailable" if no AI could answer).
+
+main.py then uses this file in three steps:
+
+    final_record.update(logic_manager.evaluate(enriched))
+    final_record["risk_score"] = logic_manager.score(final_record)
+    final_record["outcome"] = logic_manager.route(final_record)
+
+In words: evaluate works out the facts and they are added to the record;
+score adds a risk_score; route adds the final outcome. The finished record
+then goes to data_manager to be saved and to io_manager to be shown.
+
+Later, when the user picks menu option 3 (urgent items), main.py uses
+is_urgent to keep only the checks that need attention, and sorts them by
+risk_score, biggest first.
+
+
+THE SETTINGS AT THE TOP
+
+At the top of the file are four fixed settings. Their names are in CAPITALS,
+which in Python is a signal that "this value never changes while the app is
+running". Keeping them in one place means a rule can be adjusted by editing
+a single line.
+
+    SAFETY_CRITICAL_PARTS = ("brake pads", "tyres")
+
+The parts where a failure is a safety risk. Worn brake pads mean the car may
+not stop in time; worn tyres lose grip on the road. These two parts get extra
+urgency in the rules. They are written in small letters on purpose: the code
+turns the part name into small letters before comparing, so "Brake Pads" and
+"brake pads" both match. The other four parts (Engine Oil, Spark Plugs,
+Engine Air Filter, Coolant) are not safety-critical.
+
+    DAYS_PER_MONTH = 30.44
+
+Service intervals are given in months, but we count days. Months are not all
+the same length, so we use the average month length, 30.44 days (365.25 days
+in a year divided by 12, rounded). So 12 months becomes 365 days and 24
+months becomes 731 days (after rounding to a whole number).
+
+    COE_DEFER_WINDOW_DAYS = 180
+
+How close the COE (Certificate of Entitlement) expiry has to be before we
+say "the COE ends soon". 180 days is about 6 months. Used by the COE defer
+rule in route.
+
+    URGENT_PREFIXES = ("URGENT", "FLAGGED", "DUE SOON", "COE EXPIRED",
+                       "NEEDS MANUAL REVIEW")
+
+The starting words of every outcome that needs the owner's attention. Any
+saved check whose outcome begins with one of these appears in menu option 3.
+"NEEDS MANUAL REVIEW" is included because if the AI could not assess the
+part, a person should look at it. "DEFER", "MONITOR" and "OK" are not in the
+list, because those outcomes do not need action now.
+
+
+WALKTHROUGH, FUNCTION BY FUNCTION
+
+The functions appear below in the same order as in the file. A "function" is
+a named set of steps: you give it some information, it does its job, and it
+gives back ("returns") an answer.
+
+
+1. to_date(value)
+
+What it does: turns a date saved as text, like "2026-03-20", into a real
+date that Python can do maths with (for example, subtract one date from
+another).
+
+What it needs: the saved text. It is allowed to be missing or wrong.
+
+What it gives back: the date, or None (Python's word for "nothing") if the
+text is missing or isn't a valid date. It never crashes on bad input.
+
+Example (checked):
+
+    to_date("2026-03-20")  gives  20 March 2026
+    to_date("hello")       gives  None
+    to_date(None)          gives  None
+
+
+2. add_days(start, days)
+
+What it does: works out the date that is a number of days after a starting
+date. Python takes care of month ends and leap years.
+
+What it needs: a starting date and a number of days.
+
+What it gives back: the new date.
+
+Example (checked):
+
+    add_days(12 Oct 2026, 3)   gives  15 Oct 2026
+    add_days(12 Oct 2026, 14)  gives  26 Oct 2026
+
+
+3. recommend_service_date(check_date, is_overdue, km_left, days_left,
+                          km_per_day, urgency, safety_critical)
+
+This is BUSINESS RULE 3: it picks the "service by" date. It is called by
+evaluate, which hands over all the facts it has already worked out.
+
+What it needs:
+
+1. check_date: the day of the check ("today").
+2. is_overdue: True if the part has already passed its limit.
+3. km_left: km left before the km limit (None if the part has no km limit).
+4. days_left: days left before the time limit (None if no time limit).
+5. km_per_day: how many km the owner drives per day, on average.
+6. urgency: the AI's urgency score, 1 to 10 (None if the AI gave none).
+7. safety_critical: True for brake pads and tyres.
+
+What it gives back: the recommended "service by" date.
+
+How it decides, in two parts:
+
+Part A, the schedule's due date.
+If the part is already overdue, it is due today. Otherwise the code looks at
+both limits and takes whichever runs out FIRST:
+
+1. The time limit: today plus the days left.
+2. The km limit: km left divided by km per day gives the number of days
+   until the km limit is reached at this owner's own driving pace. The
+   decimals are dropped (51.5 becomes 51), which keeps us on the safe,
+   earlier side.
+
+If neither limit can be worked out (for example the part has no time
+limit stored and the owner's driving pace can't be measured yet), it plays
+safe and says today.
+
+Part B, the AI's urgency can bring the date forward.
+
+1. Urgency 8, 9 or 10: service within 3 days.
+2. Urgency 5, 6 or 7: service within 14 days.
+3. Urgency 1 to 4, or no score: keep the date from Part A.
+
+For brake pads and tyres, those windows are halved and rounded down: 3 days
+becomes 1 day, and 14 days becomes 7 days (never less than 1 day). The final
+answer is whichever is EARLIER: the Part A date or the urgency deadline. So
+the AI can only bring the date forward, never push it later.
+
+Worked example (checked). Engine Oil, every 10,000 km or 12 months (365
+days). Last serviced at 58,000 km on 20 March 2026. Checked on 12 October
+2026 at 66,000 km, so NOT yet overdue.
+
+1. 8,000 km driven in 206 days, so the pace is 8,000 / 206 = about 38.83 km
+   a day. 2,000 km are left, and 365 - 206 = 159 days are left.
+2. Part A, time limit: 12 Oct 2026 + 159 days = 20 Mar 2027.
+3. Part A, km limit: 2,000 / 38.83 = 51.5, cut to 51 days, so
+   12 Oct 2026 + 51 days = 2 Dec 2026.
+4. The earlier of the two is 2 Dec 2026.
+5. Part B with AI urgency 6: within 14 days = 26 Oct 2026. That is earlier
+   than 2 Dec 2026, so the answer is 26 Oct 2026.
+6. With AI urgency 3 instead, Part B does nothing and the answer stays
+   2 Dec 2026.
+7. If the same numbers were for brake pads with urgency 6, the window would
+   be 7 days instead of 14, giving 19 Oct 2026.
+
+
+4. evaluate(record)
+
+What it does: all the arithmetic for one check. It works out:
+
+1. km driven since the last service, and days passed since it.
+2. Whether the part is overdue, and by how many km and days.
+3. How many km the owner drives per day.
+4. Whether the part is safety-critical (brake pads or tyres).
+5. How many days until the COE expires (a negative number means it has
+   already expired).
+6. The recommended "service by" date (by calling
+   recommend_service_date above).
+
+What it needs: one record (one maintenance check).
+
+What it gives back: a NEW collection of results with these labels:
+
+    km_since_service, days_since_service, km_overdue, days_overdue,
+    is_overdue, is_safety_critical, km_per_day, coe_days_left,
+    recommended_service_date
+
+The record it was given is not changed; main.py adds these results to the
+record afterwards.
+
+THE OVERDUE RULE. A part is overdue when EITHER limit is reached:
+
+    km since the service   is at or over the km limit,  OR
+    days since the service is at or over the month limit (as days)
+
+This matches how car manuals word it: "every 10,000 km or 12 months,
+whichever comes first". If a part has no km limit (or no time limit) stored,
+that limit is simply skipped.
+
+A few safety nets are built in:
+
+1. No check date saved: today's date is used.
+2. No last-service date saved: the check date is used, which simply means
+   "0 days since the service".
+3. A missing number is treated as 0, so the maths still works.
+4. km and days since the service can never go below 0, even if the data has
+   a typing mistake.
+5. If 0 days have passed, km per day is set to 0 (you can't divide by 0).
+6. km_per_day is rounded to 1 decimal place before it is saved.
+
+Worked example (checked). Engine Oil, every 10,000 km or 12 months. Last
+serviced at 58,000 km on 20 March 2026. Checked on 12 October 2026 at
+69,500 km.
+
+1. km since service = 69,500 - 58,000 = 11,500 km.
+2. days since service = 20 Mar 2026 to 12 Oct 2026 = 206 days.
+3. km limit: 11,500 is at least 10,000, so overdue by km, by 1,500 km.
+4. time limit: 12 x 30.44 = 365.28, rounded to 365 days. 206 is under 365,
+   so not overdue by time (days_overdue = 0, 159 days left).
+5. One limit is enough, so is_overdue = True.
+6. Pace = 11,500 / 206 = 55.83, saved as 55.8 km a day.
+7. Overdue, so the recommended service date is today: 2026-10-12.
+
+A second example where the TIME limit is the one that is broken (checked).
+Brake Pads, every 40,000 km or 24 months (731 days). Last serviced at
+30,000 km on 1 September 2024. Checked on 12 October 2026 at 60,000 km.
+
+1. km since service = 30,000 km, which is under 40,000 (not over by km).
+2. days since service = 771 days, which is over 731, so overdue by 40 days.
+3. is_overdue = True, and is_safety_critical = True.
+
+
+5. score(record)
+
+What it does: gives the check a risk score from 0 to 100. The score is only
+used to SORT the urgent list (most serious first). It never changes the
+advice the owner gets.
+
+What it needs: one record, including the AI's urgency score.
+
+What it gives back: a whole number from 0 to 100.
+
+How the points add up:
+
+1. Start with AI urgency x 10 (so urgency 7 = 70 points).
+2. Add 15 if the part is overdue.
+3. Add 10 if it is a safety-critical part (brake pads or tyres).
+4. If the total is over 100, it is cut down to 100.
+5. If the AI gave no urgency score at all, the score is simply 0.
+
+Worked examples (checked):
+
+1. Engine Oil, overdue by 1,500 km, AI urgency 7:
+   70 + 15 = 85. Not a safety part. Score = 85.
+2. Brake Pads, overdue by 40 days, AI urgency 4:
+   40 + 15 + 10 = 65. Score = 65.
+3. Tyres, overdue, AI urgency 9:
+   90 + 15 + 10 = 115, which is over 100, so the score is 100.
+4. AI unavailable (no urgency score): score = 0.
+
+
+6. route(record)
+
+What it does: makes the final decision for one check. It goes through a list
+of rules from top to bottom, and the FIRST rule that matches gives the
+answer. The full list is in the next section.
+
+What it needs: one record, including the AI's urgency score, confidence and
+ai_status.
+
+What it gives back: the outcome as text, for example
+"URGENT - Service immediately".
+
+Worked examples (checked):
+
+1. Engine Oil overdue by 1,500 km, AI urgency 7, confidence High, COE far
+   away: not urgency 8 or more, not a safety part, COE not ending soon, but
+   it IS overdue, so "DUE SOON - Overdue by manufacturer schedule".
+2. Brake Pads overdue by 40 days, AI urgency 4: rule 5 applies, so
+   "URGENT - Safety-critical part overdue", even though the AI said 4.
+3. Engine Oil not overdue (4,000 km and 206 days since service), COE ends
+   on 31 Jan 2027 (111 days away), AI urgency 3:
+   "DEFER - COE expires soon, non-critical service can wait".
+4. The same Engine Oil check but with the COE years away: "OK - Not urgent".
+   With urgency 5 instead of 3: "MONITOR - Service approaching".
+5. COE ended on 30 Sep 2026, checked 12 Oct 2026 (coe_days_left = -12):
+   "COE EXPIRED - Renew the COE or deregister before servicing".
+6. AI could not answer: "NEEDS MANUAL REVIEW - AI assessment unavailable".
+
+
+7. is_urgent(record)
+
+What it does: looks at a saved check's outcome and says whether it needs the
+owner's attention, by checking whether the outcome starts with one of the
+words in URGENT_PREFIXES.
+
+What it needs: one saved record (with its "outcome").
+
+What it gives back: True (needs attention) or False.
+
+Examples (checked):
+
+    "DUE SOON - Overdue by manufacturer schedule"  gives  True
+    "OK - Not urgent"                              gives  False
+    a record with no outcome at all                gives  False
+
+main.py uses this to build the list for menu option 3.
+
+
+THE DECISION ORDER IN ROUTE()
+
+route checks these rules in this exact order. As soon as one matches, it
+stops and gives that outcome; the rules below it are never looked at.
+
+1. The AI could not answer (ai_status is not "ok", or there is no urgency
+   score):
+       NEEDS MANUAL REVIEW - AI assessment unavailable
+2. The COE has already expired (coe_days_left is below 0):
+       COE EXPIRED - Renew the COE or deregister before servicing
+3. AI urgency is 8 or more AND the AI's confidence is "High":
+       URGENT - Service immediately
+4. AI urgency is 8 or more (so confidence is Medium, Low or anything other
+   than High):
+       FLAGGED - High urgency but low AI confidence, verify with a mechanic
+5. The part is brake pads or tyres AND it is overdue:
+       URGENT - Safety-critical part overdue
+6. The COE ends within 180 days AND the part is not brake pads or tyres AND
+   AI urgency is 4 or less:
+       DEFER - COE expires soon, non-critical service can wait
+7. The part is overdue:
+       DUE SOON - Overdue by manufacturer schedule
+8. AI urgency is 1, 2 or 3:
+       OK - Not urgent
+9. Anything else (not overdue, urgency 4 to 7):
+       MONITOR - Service approaching
+
+Rules 3 and 4 together are our MULTI-CONDITION RULE, which the project brief
+requires: they combine TWO things the AI told us, the urgency AND the
+confidence. The same high urgency leads to a different outcome depending on
+how sure the AI is (in practice, how clearly the manual covers the part).
+Rule 6 is a second multi-condition rule (COE date, part type and urgency).
+
+Why the order matters, with examples:
+
+1. Rule 1 comes first because every rule after it uses the AI's urgency. If
+   there is no urgency score, those rules would make no sense.
+2. Rule 2 comes before any servicing advice because a car with an expired
+   COE can't legally be driven in Singapore, so "service immediately" would
+   be pointless advice.
+3. Rules 3 and 4 come before rule 5 so that a very high urgency is never
+   watered down. Overdue brake pads with urgency 9 and High confidence get
+   "URGENT - Service immediately"; with Medium confidence they get FLAGGED
+   for a mechanic to confirm.
+4. Rule 5 comes before rule 6 so that brake pads or tyres can never be
+   deferred. (Rule 6 also checks "not a safety part" itself, as a second
+   guard.)
+5. Rule 5 also comes before rule 7. Without that, overdue brake pads with a
+   low AI score would only get "DUE SOON" instead of "URGENT".
+6. Rule 6 comes before rule 7 on purpose: an overdue oil change on a car
+   whose COE ends in a few months, with low AI urgency, is deferred rather
+   than marked DUE SOON, because the car may soon be off the road.
+7. Rules 8 and 9 are only reached by parts that are not overdue and have
+   urgency under 8, so they simply split "fine" from "keep an eye on it".
+
+
+FULL WORKED EXAMPLE
+
+The situation:
+
+    Car:               Mazda 3 Hatchback 2020
+    COE expiry:        15 June 2030 (2030-06-15)
+    Part:              Engine Oil
+    Interval:          every 10,000 km or 12 months, whichever comes first
+    Last serviced:     20 March 2026 at 58,000 km
+    Checked:           12 October 2026 at 69,500 km
+    AI's answer:       urgency 8, confidence Medium, ai_status "ok"
+
+Every figure below was produced by running the real functions.
+
+STEP 1, evaluate: the facts.
+
+1. km since service: 69,500 - 58,000 = 11,500 km.
+2. Days since service: from 20 Mar 2026 to 12 Oct 2026 is 206 days.
+3. Interval in days: 12 x 30.44 = 365.28, rounded to 365 days.
+4. Overdue by km? 11,500 is at least 10,000, so yes, by 1,500 km.
+5. Overdue by time? 206 is less than 365, so no (days_overdue = 0, with
+   159 days to spare).
+6. Either limit is enough, so is_overdue = True.
+7. km per day: 11,500 / 206 = 55.83, saved as 55.8.
+8. Safety-critical? "engine oil" is not brake pads or tyres, so False.
+9. COE days left: 12 Oct 2026 to 15 Jun 2030 = 1,342 days. Positive, so the
+   COE is still valid and is not "ending soon" (more than 180 days).
+
+STEP 2, the "service by" date (recommend_service_date, inside evaluate).
+
+1. Part A: the part is already overdue, so it is due today, 12 Oct 2026.
+2. Part B: urgency 8 means "within 3 days" (not halved, because engine oil
+   is not safety-critical), which would be 15 Oct 2026.
+3. The earlier of 12 Oct and 15 Oct is 12 Oct.
+4. recommended_service_date = 2026-10-12.
+
+What evaluate hands back:
+
+    km_since_service          11500
+    days_since_service        206
+    km_overdue                1500
+    days_overdue              0
+    is_overdue                True
+    is_safety_critical        False
+    km_per_day                55.8
+    coe_days_left             1342
+    recommended_service_date  2026-10-12
+
+STEP 3, score: the risk score.
+
+1. Urgency 8 x 10 = 80.
+2. Overdue, so + 15 = 95.
+3. Not safety-critical, so nothing more.
+4. 95 is not over 100, so risk_score = 95.
+
+STEP 4, route: the decision.
+
+1. Rule 1: ai_status is "ok" and there is an urgency score, so move on.
+2. Rule 2: coe_days_left is 1,342, not below 0, so move on.
+3. Rule 3: urgency 8 is 8 or more, but confidence is Medium, not High, so
+   this rule does not match.
+4. Rule 4: urgency is 8 or more, so this rule matches. Stop here.
+
+    outcome = "FLAGGED - High urgency but low AI confidence, verify with a
+               mechanic"
+
+(If the AI had said confidence High, the outcome would have been
+"URGENT - Service immediately" instead. This is the multi-condition rule in
+action.)
+
+STEP 5, is_urgent: does it go on the urgent list?
+
+The outcome starts with "FLAGGED", which is in URGENT_PREFIXES, so
+is_urgent gives True. This check will appear in menu option 3, sorted by its
+risk score of 95.
+
+
+PYTHON IDEAS USED IN THIS FILE
+
+1. import. "import datetime" borrows Python's built-in toolbox for dates,
+   like taking a calculator out of a drawer instead of building one.
+
+2. Constants in CAPITALS. Names like DAYS_PER_MONTH are settings that never
+   change, like the rules printed on a board game's box lid.
+
+3. Tuple, written with round brackets ( ). A fixed list that can't be
+   changed once made, like a printed menu rather than a whiteboard.
+
+4. Function (def ... return). A named recipe: you hand it ingredients, it
+   follows the steps, and "return" hands the finished dish back. A return
+   also ends the recipe at once, which is how route stops at the first rule
+   that matches.
+
+5. Dictionary and .get(). A record is a dictionary: a form with labelled
+   boxes. record.get("check_date") reads one box, and gives None instead of
+   an error if the box is missing, like being told "that line is blank".
+
+6. None. Python's word for "nothing / no answer", for example when there is
+   no COE date or the AI gave no urgency score.
+
+7. "x or y" as a fallback. "to_date(...) or datetime.date.today()" means
+   "use the saved date, but if there isn't one, use today", like "pay by
+   card, or cash if the card doesn't work".
+
+8. if / elif / else. A fork in the road: check the first condition, and
+   only if it fails try the next ("elif" = "else if"), and if none match
+   take the "else" path.
+
+9. and / or / not. "and" needs both sides true (overdue AND a brake part);
+   "or" needs at least one (over the km limit OR over the time limit);
+   "not" flips true and false.
+
+10. try / except. "Try this, and if it goes wrong, do that instead of
+    crashing", like trying a key in a lock and calmly moving on if it
+    doesn't fit. Used by to_date for bad date text.
+
+11. min() and max(). min picks the smallest value, max the biggest. For
+    dates, the smallest is the earliest, which is how we pick "whichever
+    comes first". max(0, ...) is a floor that stops a value going below 0;
+    min(100, ...) is a ceiling that caps the risk score.
+
+12. int(), round() and //. int() drops the decimals (51.5 becomes 51),
+    round() rounds to the nearest whole number (365.28 becomes 365), and //
+    divides then rounds down (3 // 2 = 1, 14 // 2 = 7).
+
+13. Dates and timedelta. Subtracting two dates gives a length of time, and
+    .days reads it as a number of days. Adding a timedelta to a date jumps
+    forward on the calendar, like counting squares on a wall calendar.
+
+14. Tidying text: .strip().lower(). Removes spaces at the ends and turns
+    everything into small letters, so "Brake Pads " becomes "brake pads".
+
+15. in. Checks whether something is in a collection, like checking whether
+    a name is on a guest list.
+
+16. .startswith(). Checks how a piece of text begins, like reading only the
+    first word on a label. Given a tuple of words, it is true if the text
+    starts with ANY of them.
+
+17. Type hints such as "-> bool" or "-> datetime.date". Notes for the
+    reader saying what kind of value goes in and comes out.
+    Python does not enforce them; they are like labels on storage boxes.
+
+
+PROJECT RULES THIS FILE FOLLOWS
+
+1. Brief section 2.3, the Logic layer: the brief asks for evaluate(record),
+   score(record) and route(record). All three are in this file with exactly
+   those names.
+
+2. Brief, multi-condition rule: at least one rule must combine two of the
+   AI's outputs. Rules 3 and 4 in route combine the urgency score AND the
+   confidence. Rule 6 (COE defer) is a further multi-condition rule.
+
+3. Business rule 2, manual guidebook: service intervals come from our
+   stored schedule (cars.json), loaded by data_manager and placed in the
+   record by main.py. This file only reads interval_km and interval_months
+   from the record; it never makes up an interval.
+
+4. Business rule 3, service date: recommend_service_date sets a
+   "service by" date using how important the part is (safety-critical parts
+   get half the time), how much the owner drives (km per day), the odometer
+   (km left) and the AI's urgency score.
+
+5. Singapore COE rules: an expired COE gives "COE EXPIRED", and a COE
+   ending within 180 days lets low-urgency, non-safety servicing be
+   deferred.
+
+6. Safety first: overdue brake pads or tyres always get an URGENT outcome,
+   whatever the AI said, and they can never be deferred.
+
+7. Every check goes through the AI (hard constraint C2), but the app must
+   not break when the AI is unavailable. When ai_manager hands over its
+   fallback answer, route gives "NEEDS MANUAL REVIEW" and score gives 0, so
+   a person is asked to look at it.
+
+8. Numbers are never left to the AI: all km, day and date calculations are
+   done here with plain arithmetic.
+
+9. Separation of layers: this file has no screen, AI or file code. Business
+   rule 1 (the odometer can't go backwards) is checked while the user types,
+   in io_manager.py, not here.
