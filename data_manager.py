@@ -1,14 +1,14 @@
 """
-data_manager.py -- the Data layer: saves and loads everything the app remembers.
+data_manager.py - The Data Storage Layer
 
-Three JSON files in data/:
-    maintenance_records.json   every finished maintenance check
-    users.json                 user profiles, one per license plate
-    cars.json                  the 4 supported cars and their service schedules
-Pipeline: io -> ai -> logic -> data. Only main.py calls this file; no other manager
-reads or writes these data files.
-Only saving, loading and lookups here: no business decisions and no print().
-See explanations/data_manager_explained.txt for a full walkthrough.
+This file manages reading and writing data to three JSON files inside the data/ folder:
+    1. maintenance_records.json - History of all completed vehicle checks
+    2. users.json                - User account profiles (one per license plate)
+    3. cars.json                 - Supported car models and official maintenance schedules
+
+Architecture Flow: io -> ai -> logic -> data
+Only main.py calls this file directly.
+This file ONLY handles saving, loading, and looking up data. It contains no business logic.
 """
 import json
 import logging
@@ -16,8 +16,7 @@ import os
 
 logger = logging.getLogger("data_manager")
 
-# Paths are built from this file's location, so the app finds data/ whatever folder
-# it is started from (including inside Docker).
+# Find project directory so file paths work everywhere (including inside Docker)
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(PROJECT_DIR, "data")
 DATA_FILE = os.path.join(DATA_DIR, "maintenance_records.json")
@@ -26,24 +25,22 @@ CARS_FILE = os.path.join(DATA_DIR, "cars.json")
 
 VALID_CONDITIONS = ("Brand New", "Used")
 
-# A new check is a "repeat" when ALL five inputs match a saved check. main.py then shows
-# the saved answer instead of calling the AI again: same inputs give the same result,
-# with no extra API usage. check_date is not compared, so a repeat on another day counts.
+# Fields used to detect a duplicate check. If all 5 match a previous check,
+# main.py reuses the saved answer instead of calling the AI API again.
 REPEAT_FIELDS = ("license_plate", "part_name", "last_service_date",
                  "last_service_mileage", "current_odometer")
 
 
 # ======================================================================
-# READING AND WRITING FILES SAFELY
-# Constraint C4: all data lives in flat JSON files (no database). These three helpers
-# are the only code that opens a file, and none of them ever lets an error crash the app.
+# FILE I/O HELPERS
+# Safe functions for opening and saving JSON files without crashing the app.
 # ======================================================================
 
 def read_json(path: str):
-    """Read a JSON file and return its contents.
-    Returns None if the file is missing, empty or damaged (problems are logged)."""
+    """Read a JSON file and return its data.
+    Returns None if missing, empty, or corrupted (errors are logged quietly)."""
     if not os.path.exists(path):
-        return None                     # no file yet: normal on first run
+        return None                     # Normal on the first run before data files exist
     try:
         with open(path, "r", encoding="utf-8") as file:
             content = file.read().strip()
@@ -51,15 +48,14 @@ def read_json(path: str):
             return None
         return json.loads(content)
     except (OSError, json.JSONDecodeError) as error:
-        # OSError = can't open the file; JSONDecodeError = the text isn't valid JSON.
-        # Log it and carry on as if there were no data, instead of crashing.
+        # Catch file access or JSON formatting errors so the app keeps running
         logger.error("Could not read %s (missing permission or corrupt JSON): %s", path, error)
         return None
 
 
 def read_list(path: str) -> list[dict]:
-    """Read a file that should hold a list (checks or users).
-    Returns that list, or [] if the file is missing, damaged or not a list."""
+    """Read a file expecting a list (like users or checks).
+    Returns the list, or an empty list [] if missing, broken, or not a list."""
     data = read_json(path)
     if isinstance(data, list):
         return data
@@ -69,8 +65,8 @@ def read_list(path: str) -> list[dict]:
 
 
 def write_list(path: str, items: list[dict]) -> bool:
-    """Overwrite a file with the whole list, creating data/ if needed.
-    Returns True on success, False if writing failed (the error is logged)."""
+    """Overwrite a file with a full list, creating the data/ folder if needed.
+    Returns True if saving succeeded, False if it failed."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as file:
@@ -82,24 +78,25 @@ def write_list(path: str, items: list[dict]) -> bool:
 
 
 # ======================================================================
-# MAINTENANCE CHECKS: save, load and query (data/maintenance_records.json)
+# MAINTENANCE RECORDS (data/maintenance_records.json)
+# Functions to save, load, query, and clean up completed service checks.
 # ======================================================================
 
 def load() -> list[dict]:
-    """Return every saved maintenance check, oldest first ([] if none yet)."""
+    """Return all saved maintenance checks (oldest first)."""
     return read_list(DATA_FILE)
 
 
 def save(record: dict) -> bool:
-    """Append one finished check to the file (reads all, adds one, rewrites all).
-    Returns True if it was saved."""
+    """Append one new finished check to the records file.
+    Returns True if successfully saved."""
     records = load()
     records.append(record)
     return write_list(DATA_FILE, records)
 
 
 def query(filter_fn) -> list[dict]:
-    """Return the saved checks for which filter_fn(check) is True, in saved order.
+    """Return saved checks matching a specific condition.
     Example: query(lambda r: r["part_name"] == "Coolant")"""
     matching = []
     for record in load():
@@ -109,7 +106,7 @@ def query(filter_fn) -> list[dict]:
 
 
 def same_inputs(record_a: dict, record_b: dict) -> bool:
-    """Return True if the two checks match on every field in REPEAT_FIELDS."""
+    """Check if two maintenance checks share identical inputs across REPEAT_FIELDS."""
     for field in REPEAT_FIELDS:
         if record_a.get(field) != record_b.get(field):
             return False
@@ -117,20 +114,19 @@ def same_inputs(record_a: dict, record_b: dict) -> bool:
 
 
 def find_repeat(record: dict) -> dict | None:
-    """Return the most recent saved check with the same inputs as record, or None."""
+    """Find and return the most recent saved check with identical inputs, or None."""
     matches = query(lambda saved: same_inputs(saved, record))
     if matches:
-        return matches[-1]              # checks are appended, so the last match is newest
+        return matches[-1]              # Newest match is at the end of the list
     return None
 
 
 def get_last_odometer(records: list[dict], license_plate: str) -> int | None:
-    """Return the highest odometer reading saved for this car, or None if there is none.
-    Readings from every part count, since the odometer belongs to the whole car."""
+    """Return the highest odometer reading recorded for a car plate, or None if none exist."""
     readings = []
     for record in records:
         odometer = record.get("current_odometer")
-        # Skip readings that aren't whole numbers (e.g. hand-edited as "45000" text).
+        # Ensure license plate matches and mileage is a valid integer number
         if record.get("license_plate") == license_plate and isinstance(odometer, int):
             readings.append(odometer)
     if readings:
@@ -139,8 +135,8 @@ def get_last_odometer(records: list[dict], license_plate: str) -> int | None:
 
 
 def delete_records_for_plate(license_plate: str) -> int:
-    """Delete every saved check for one car. Returns how many were deleted.
-    main.py calls this right after delete_user, so a deleted profile leaves no checks."""
+    """Delete all saved maintenance checks for a specific license plate.
+    Called when a user profile is deleted. Returns number of removed checks."""
     records = load()
     remaining = []
     for record in records:
@@ -148,22 +144,22 @@ def delete_records_for_plate(license_plate: str) -> int:
             remaining.append(record)
     removed_count = len(records) - len(remaining)
     if removed_count > 0 and not write_list(DATA_FILE, remaining):
-        return 0                        # the write failed, so nothing was really deleted
+        return 0                        # Write failed, so nothing was deleted
     return removed_count
 
 
 # ======================================================================
-# USER PROFILES: Create, Read, Update, Delete (data/users.json)
-# The license plate is the unique key: one profile per plate.
+# USER PROFILES (data/users.json)
+# Functions to load, find, save, and delete user profiles using license plates.
 # ======================================================================
 
 def load_users() -> list[dict]:
-    """Return every user profile ([] if none yet)."""
+    """Return all saved user profiles."""
     return read_list(USERS_FILE)
 
 
 def find_user_by_plate(license_plate: str) -> dict | None:
-    """Return the profile with this license plate, or None."""
+    """Find a user profile by license plate, or return None if not found."""
     for user in load_users():
         if user.get("license_plate") == license_plate:
             return user
@@ -171,47 +167,43 @@ def find_user_by_plate(license_plate: str) -> dict | None:
 
 
 def save_user(user: dict) -> bool:
-    """Create a profile, or replace the existing one with the same plate.
-    Returns True if it was saved."""
+    """Create a new user profile or update an existing one matching the license plate."""
     users_to_keep = []
     for existing in load_users():
         if existing.get("license_plate") != user["license_plate"]:
             users_to_keep.append(existing)
-    users_to_keep.append(user)          # an old copy with this plate was left out above
+    users_to_keep.append(user)          # Replace old profile with updated details
     return write_list(USERS_FILE, users_to_keep)
 
 
 def delete_user(license_plate: str) -> bool:
-    """Delete the profile with this plate (its checks are removed separately).
-    Returns False if no such profile exists or saving failed."""
+    """Delete a user profile matching the given license plate.
+    Returns False if plate wasn't found or saving failed."""
     users = load_users()
     remaining = []
     for user in users:
         if user.get("license_plate") != license_plate:
             remaining.append(user)
     if len(remaining) == len(users):
-        return False                    # plate not found
+        return False                    # Plate not found
     return write_list(USERS_FILE, remaining)
 
 
 # ======================================================================
-# THE CAR LIST (data/cars.json)
-# Business rule 2: service intervals come ONLY from the stored manufacturer schedule
-# here, never from the user or the AI. Entries are checked on load so a typo in
-# cars.json can't crash the app.
+# CAR SCHEDULES & MANUALS (data/cars.json)
+# Functions to read manufacturer schedules and locate PDF manuals.
 # ======================================================================
 
 def is_valid_interval(entry) -> bool:
-    """Return True if a schedule line looks like {"km": 10000, "months": 12},
-    with both values whole numbers above zero."""
+    """Check if a service interval line looks like {"km": 10000, "months": 12} 
+    with both values being positive integers."""
     return (isinstance(entry, dict)
             and isinstance(entry.get("km"), int) and entry["km"] > 0
             and isinstance(entry.get("months"), int) and entry["months"] > 0)
 
 
 def is_valid_car(car) -> bool:
-    """Return True if a car entry has a non-blank model, a condition of Brand New or
-    Used, a manual path (text) and a schedule (a dictionary)."""
+    """Check if a car entry contains a valid model name, condition, manual path, and schedule."""
     return (isinstance(car, dict)
             and isinstance(car.get("model"), str) and car["model"].strip() != ""
             and car.get("condition") in VALID_CONDITIONS
@@ -220,8 +212,7 @@ def is_valid_car(car) -> bool:
 
 
 def load_cars() -> list[dict]:
-    """Return every valid car from cars.json, in file order, with only valid schedule
-    lines kept. Returns [] if the file is missing, damaged or has no "cars" list."""
+    """Load valid cars from cars.json. Invalid entries or schedule lines are safely skipped."""
     data = read_json(CARS_FILE)
     if not isinstance(data, dict) or not isinstance(data.get("cars"), list):
         if data is not None:
@@ -230,26 +221,25 @@ def load_cars() -> list[dict]:
 
     cars = []
     for car in data["cars"]:
-        # An invalid car is skipped and logged; the other cars still load.
+        # Skip invalid car entries while keeping the valid ones
         if not is_valid_car(car):
             logger.error("Skipping invalid car entry in %s: %r", CARS_FILE, car)
             continue
 
-        # An invalid schedule line is dropped silently (not logged), so that part
-        # just won't be offered for this car.
+        # Keep only valid schedule lines for this car
         good_schedule = {}
         for part, interval in car["schedule"].items():
             if is_valid_interval(interval):
                 good_schedule[part] = interval
 
-        clean_car = dict(car)           # a copy, so the loaded data isn't changed
+        clean_car = dict(car)           # Copy dict to avoid mutating original data
         clean_car["schedule"] = good_schedule
         cars.append(clean_car)
     return cars
 
 
 def list_car_models() -> list[str]:
-    """Return the car model names to choose from at registration, in file order."""
+    """Return a list of available car model names."""
     names = []
     for car in load_cars():
         names.append(car["model"])
@@ -257,7 +247,7 @@ def list_car_models() -> list[str]:
 
 
 def find_car(car_model: str) -> dict | None:
-    """Return the cars.json entry with this exact model name, or None."""
+    """Find and return a car entry by its model name, or None if not found."""
     for car in load_cars():
         if car["model"] == car_model:
             return car
@@ -265,7 +255,7 @@ def find_car(car_model: str) -> dict | None:
 
 
 def list_parts(car_model: str) -> list[str]:
-    """Return the part names in this car's schedule, A-Z ([] if the car is unknown)."""
+    """Return an alphabetically sorted list of tracked parts for a car model."""
     car = find_car(car_model)
     if car is None:
         return []
@@ -273,8 +263,8 @@ def list_parts(car_model: str) -> list[str]:
 
 
 def get_service_interval(car_model: str, part_name: str) -> dict | None:
-    """Return e.g. {"interval_km": 10000, "interval_months": 12} for this car and part,
-    or None if either is unknown."""
+    """Return the service interval dict (e.g. {"interval_km": 10000, "interval_months": 12})
+    for a given car model and part."""
     car = find_car(car_model)
     if car is None or part_name not in car["schedule"]:
         return None
@@ -283,8 +273,7 @@ def get_service_interval(car_model: str, part_name: str) -> dict | None:
 
 
 def get_manual_path(car_model: str) -> str | None:
-    """Return the full path to this car's manual PDF, or None if the car is unknown
-    or the file isn't there (a missing file is logged)."""
+    """Return the absolute path to a car model's PDF manual, or None if missing."""
     car = find_car(car_model)
     if car is None:
         return None
